@@ -1,0 +1,110 @@
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-5);
+}
+
+/* Status pills — uppercase mono (§7) */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  text-transform: uppercase;
+}
+.pill-neutral {
+  color: var(--text-secondary);
+  background: var(--neutral-fill);
+}
+.pill-pending {
+  color: var(--warning);
+  background: var(--warning-fill);
+  border-color: rgba(251, 191, 36, 0.25);
+}
+.pill-positive {
+  color: var(--accent);
+  background: var(--accent-fill);
+  border-color: rgba(110, 231, 183, 0.25);
+}
+.pill-negative {
+  color: var(--danger);
+  background: var(--danger-fill);
+  border-color: rgba(248, 113, 113, 0.25);
+}
+.pill-muted {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+.metric-value {
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.metric-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.status-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+.status-title {
+  font-weight: 600;
+}
+.status-body {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.status-negative {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+.status-negative .status-title {
+  color: var(--danger);
+}
+.status-warning {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+.status-warning .status-title {
+  color: var(--warning);
+}
+
+.spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+.spinner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+.spinner-label {
+  font-size: 13px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
