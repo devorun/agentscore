@@ -92,10 +92,19 @@
   padding: 2px 7px;
   letter-spacing: 0.02em;
 }
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
 .site-nav {
   display: flex;
   gap: var(--space-4);
   margin-left: auto;
+}
+.site-nav + .header-actions {
+  margin-left: var(--space-2);
 }
 .nav-link {
   color: var(--text-secondary);

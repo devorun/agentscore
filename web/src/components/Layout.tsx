@@ -4,12 +4,9 @@ import { WalletButton } from './WalletButton'
 import { NetworkGuard } from './NetworkGuard'
 import './layout.css'
 
-const NAV = [
-  { to: '/registry', label: 'Registry' },
-  { to: '/jobs', label: 'Jobs' },
-  { to: '/arbiter', label: 'Arbiter' },
-  { to: '/leaderboard', label: 'Leaderboard' },
-]
+// Nav items are added here as each page ships (phase gates). Controls for
+// unbuilt features must not render, so this list stays empty until Phase 3+.
+const NAV: { to: string; label: string }[] = []
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
@@ -24,19 +21,23 @@ export function Layout({ children }: { children: ReactNode }) {
             <span className="built-on-badge mono">Built on Arc</span>
           </NavLink>
 
-          <nav className="site-nav" aria-label="Primary">
-            {NAV.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+          {NAV.length > 0 ? (
+            <nav className="site-nav" aria-label="Primary">
+              {NAV.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+          ) : null}
 
-          <WalletButton />
+          <div className="header-actions">
+            <WalletButton />
+          </div>
         </div>
         <NetworkGuard />
       </header>

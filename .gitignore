@@ -9,6 +9,12 @@ node_modules/
 # Frontend build
 dist/
 
+# Playwright
+test-results/
+playwright-report/
+.playwright/
+web/screenshots/
+
 # Foundry artifacts
 out/
 cache/

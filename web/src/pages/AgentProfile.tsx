@@ -9,7 +9,7 @@ import './agent.css'
 
 export function AgentProfile() {
   const { address: rawAddress } = useParams()
-  const { data, isLoading, isError, refetch, isValidAddress, address } = useAgentData(rawAddress)
+  const { data, isLoading, isError, error, isFetching, refetch, isValidAddress, address } = useAgentData(rawAddress)
   const { address: connected } = useAccount()
 
   if (!isValidAddress) {
@@ -44,12 +44,12 @@ export function AgentProfile() {
           tone="negative"
           title="Could not index this agent"
           action={
-            <button className="btn btn-small" onClick={() => refetch()}>
-              Retry
+            <button className="btn btn-small" onClick={() => refetch()} disabled={isFetching}>
+              {isFetching ? 'Retrying…' : 'Retry'}
             </button>
           }
         >
-          The explorer or RPC did not respond. This is usually a transient rate limit.
+          {error instanceof Error ? error.message : 'The Arcscan explorer or Arc Testnet RPC did not respond.'}
         </StatusMessage>
       ) : data ? (
         <AgentBody data={data} />

@@ -1,8 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getAddress } from 'viem'
-import { MetricLabel, Panel, SectionPrefix, Spinner } from '../components/ui'
-import { ExplorerLink } from '../components/ui'
+import { ExplorerLink, MetricLabel, Panel, SectionPrefix, Spinner, StatusMessage } from '../components/ui'
 import { useEcosystemStats } from '../hooks/useEcosystemStats'
 import { blockUrl } from '../lib/format'
 import { formatUsdc, formatCompact } from '../lib/format'
@@ -109,20 +108,30 @@ export function Home() {
             </div>
           </Panel>
         </div>
-        <div className="index-stamp mono">
-          {stats.data ? (
-            <>
-              last indexed at block {stats.data.lastIndexedBlock.toString()}{' '}
-              <ExplorerLink href={blockUrl(stats.data.lastIndexedBlock)}>arcscan</ExplorerLink>
-            </>
-          ) : stats.isError ? (
-            <button className="btn btn-small" onClick={() => stats.refetch()}>
-              RPC error — retry
-            </button>
-          ) : (
-            'reading chain head…'
-          )}
-        </div>
+        {stats.isError ? (
+          <StatusMessage
+            tone="negative"
+            title="Could not read ecosystem stats from the chain"
+            action={
+              <button className="btn btn-small" onClick={() => stats.refetch()} disabled={stats.isFetching}>
+                {stats.isFetching ? 'Retrying…' : 'Retry'}
+              </button>
+            }
+          >
+            {stats.error instanceof Error ? stats.error.message : 'The Arc Testnet RPC did not respond.'}
+          </StatusMessage>
+        ) : (
+          <div className="index-stamp mono">
+            {stats.data ? (
+              <>
+                last indexed at block {stats.data.lastIndexedBlock.toString()}{' '}
+                <ExplorerLink href={blockUrl(stats.data.lastIndexedBlock)}>arcscan</ExplorerLink>
+              </>
+            ) : (
+              'reading chain head…'
+            )}
+          </div>
+        )}
       </section>
 
       <section className="how" id="how-it-works">
