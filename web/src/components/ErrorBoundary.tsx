@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { StatusMessage } from './ui'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 
 interface Props {
   children: ReactNode
@@ -8,8 +9,8 @@ interface State {
   error: Error | null
 }
 
-// Last line of defense: any uncaught render error shows a message with the real
-// reason and a reload, never a blank screen (§7 — states are mandatory).
+// Last line of defense: any uncaught render error shows the real reason with a
+// reload, never a blank screen.
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null }
 
@@ -24,19 +25,16 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ maxWidth: '640px', margin: '0 auto', padding: 'var(--space-8) var(--space-5)' }}>
-          <StatusMessage
-            tone="negative"
-            title="Something went wrong rendering this page"
-            action={
-              <button className="btn btn-small" onClick={() => window.location.reload()}>
-                Reload
-              </button>
-            }
+        <Card className="mx-auto flex max-w-xl flex-col items-start gap-4 rounded-xl border-destructive/40 bg-card p-8">
+          <h2 className="text-[20px] font-semibold text-foreground">Something went wrong rendering this page</h2>
+          <p className="text-[14px] text-muted-foreground">{this.state.error.message}</p>
+          <Button
+            className="h-9 rounded-[9px] bg-primary font-medium text-primary-foreground hover:bg-primary/90"
+            onClick={() => window.location.reload()}
           >
-            {this.state.error.message}
-          </StatusMessage>
-        </div>
+            Reload
+          </Button>
+        </Card>
       )
     }
     return this.props.children

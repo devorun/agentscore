@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * AgentScore theme — premium layered dark (§7 of the brief).
+ * Single source of truth for color. No hardcoded colors anywhere else.
+ */
+:root {
+  --radius: 0.75rem; /* 12px cards; controls use 9px explicitly */
+
+  /* shadcn semantic tokens */
+  --background: #0a0a0b;
+  --foreground: #fafaf7;
+  --card: #131316;
+  --card-foreground: #fafaf7;
+  --popover: #1b1b1f;
+  --popover-foreground: #fafaf7;
+  --primary: #2775ca; /* Arc blue */
+  --primary-foreground: #fafaf7;
+  --secondary: #1b1b1f;
+  --secondary-foreground: #fafaf7;
+  --muted: #131316;
+  --muted-foreground: #a1a09a;
+  --accent: #1b1b1f;
+  --accent-foreground: #fafaf7;
+  --destructive: #b3261e;
+  --destructive-foreground: #fafaf7;
+  --border: #26262b;
+  --input: #26262b;
+  --ring: #4d8df0; /* neon focus */
+
+  /* brand + semantic extensions */
+  --surface-1: #131316;
+  --surface-2: #1b1b1f;
+  --neon: #4d8df0;
+  --arc-blue: #2775ca;
+  --cream: #ede9e0;
+  --success: #0f7b55;
+  --warning: #b45309;
+  --danger: #b3261e;
+  --focus-glow: rgba(77, 141, 240, 0.35);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-neon: var(--neon);
+  --color-arc: var(--arc-blue);
+  --color-cream: var(--cream);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace; /* terminal panel only */
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Figures and addresses (§7): Inter with tabular figures. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
