@@ -45,8 +45,27 @@ export interface ApiJob {
   tx: string
 }
 
+export interface ApiDeliverable {
+  jobId: string
+  producedBy: `0x${string}`
+  spec: string
+  inputRows: number
+  outputRows: number
+  outputHash: string
+  submittedTx: string | null
+  verdict: {
+    outcome: 'approved' | 'rejected'
+    checks: { schema: boolean; rowCount: boolean; noDuplicates: boolean; checksumMatch: boolean; exactMatch: boolean }
+    expectedRowCount: number
+    gotRowCount: number
+    settleTx: string | null
+  } | null
+  output: { address: string; balanceUsd: number; txCount: number; risk: 'low' | 'medium' | 'high' }[]
+}
+
 export const apiAgent = (address: string) => apiGet<ApiAgent>(`/agent/${address}`)
 export const apiJobs = () => apiGet<{ jobs: ApiJob[] }>('/jobs')
+export const apiDeliverable = (jobId: string) => apiGet<ApiDeliverable>(`/deliverable/${jobId}`)
 
 export const STATUS_INDEX: Record<string, number> = {
   open: 0,

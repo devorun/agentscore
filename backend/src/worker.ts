@@ -3,9 +3,28 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { publicClient } from './lib/chain.js'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
 import { arcTestnet, ARC_RPC, ERC8183_ADDRESS, EXPLORER_URL, JobStatus, REGISTRY_ADDRESS } from './lib/config.js'
+import { enrich, enrichTampered, hashOutput, loadInputDataset, verify } from './lib/enrichment.js'
+import { getDeliverable, saveDeliverable, setVerdict } from './lib/store.js'
 
-const PRICE_6 = parseUnits('10', 6) // Lexica's listed price
+const PRICE_6 = parseUnits(process.env.AGENT_PRICE_USDC || '10', 6)
 const POLL_MS = 6000
+
+/** Read the deliverable hash the provider actually submitted onchain. */
+async function onchainDeliverable(jobId: bigint): Promise<`0x${string}` | undefined> {
+  const head = await publicClient.getBlockNumber()
+  const fromBlock = head > 9000n ? head - 9000n : 0n
+  const submittedEvent = erc8183Abi.find((x) => x.type === 'event' && x.name === 'JobSubmitted')!
+  const logs = await publicClient.getLogs({
+    address: ERC8183_ADDRESS,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    event: submittedEvent as any,
+    args: { jobId },
+    fromBlock,
+    toBlock: head,
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (logs[0] as any)?.args?.deliverable as `0x${string}` | undefined
+}
 
 // ---- Pure, testable decision logic ---------------------------------------
 interface JobView {
@@ -13,6 +32,8 @@ interface JobView {
   budget: bigint
   evaluator: Address
   expiredAt: bigint
+  description: string
+  provider: Address
 }
 
 /** The agent prices an Open job with no budget yet. */
@@ -78,43 +99,72 @@ export async function startWorker(): Promise<void> {
     try {
       acting.add(jobId)
       if (agentShouldSetBudget(job)) {
-        await send(`agent setBudget #${jobId} (10 USDC)`, agent, {
+        await send(`agent setBudget #${jobId}`, agent, {
           address: ERC8183_ADDRESS,
           abi: erc8183Abi,
           functionName: 'setBudget',
           args: [jobId, PRICE_6, '0x'],
         })
       } else if (agentShouldSubmit(job)) {
-        await send(`agent submit #${jobId}`, agent, {
-          address: ERC8183_ADDRESS,
-          abi: erc8183Abi,
-          functionName: 'submit',
-          args: [jobId, keccak256(toHex(`agentscore:deliverable:job-${jobId}`)), '0x'],
+        // Agent does REAL work: dedupe + risk-label the dataset, hash the actual
+        // output, store it, and submit that hash. ([BAD] triggers a faulty run
+        // for the reject demo.)
+        const tamper = /\[bad\]|tamper/i.test(job.description)
+        const input = loadInputDataset()
+        const output = tamper ? enrichTampered(input) : enrich(input)
+        const outputHash = hashOutput(output)
+        saveDeliverable({
+          jobId: jobId.toString(),
+          producedBy: AGENT,
+          spec: 'dedupe wallet dataset by address + risk-label each row',
+          inputRows: input.length,
+          output,
+          outputHash,
+          createdAt: Math.floor(Date.now() / 1000),
         })
+        const hash = await agent.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'submit', args: [jobId, outputHash, '0x'] })
+        log(`agent submit #${jobId} (real output: ${output.length} rows${tamper ? ', TAMPERED' : ''}) → ${tx(hash)}`)
+        await publicClient.waitForTransactionReceipt({ hash })
+        const rec = getDeliverable(jobId.toString())
+        if (rec) {
+          rec.submittedTx = hash
+          saveDeliverable(rec)
+        }
       } else {
-        const verdict = arbiterVerdict(job, Math.floor(Date.now() / 1000))
-        if (verdict === 'approve') {
-          const reason = keccak256(toHex(`agentscore:auto-approved:job-${jobId}`))
-          await send(`arbiter complete #${jobId} release 10 USDC`, arbiter, {
-            address: ERC8183_ADDRESS,
-            abi: erc8183Abi,
-            functionName: 'complete',
-            args: [jobId, reason, '0x'],
-          })
-          await send(`arbiter attest APPROVED #${jobId}`, arbiter, {
-            address: REGISTRY_ADDRESS,
-            abi: registryAbi,
-            functionName: 'attest',
-            args: [jobId, getAddress(job.provider), 0, reason],
-          })
-          log(`✅ job #${jobId} settled — 10 USDC released, verdict attested.`)
-        } else if (verdict === 'reject') {
-          await send(`arbiter reject #${jobId}`, arbiter, {
+        // Arbiter genuinely verifies the produced deliverable before settling.
+        const nowSec = Math.floor(Date.now() / 1000)
+        if (nowSec >= Number(job.expiredAt)) {
+          await send(`arbiter reject #${jobId} (past deadline)`, arbiter, {
             address: ERC8183_ADDRESS,
             abi: erc8183Abi,
             functionName: 'reject',
             args: [jobId, keccak256(toHex(`agentscore:rejected-late:job-${jobId}`)), '0x'],
           })
+          return
+        }
+        const rec = getDeliverable(jobId.toString())
+        if (!rec) {
+          log(`job #${jobId} submitted but no local deliverable to verify — skipping`)
+          return
+        }
+        const onchain = await onchainDeliverable(jobId)
+        const result = verify(loadInputDataset(), rec.output, onchain ?? rec.outputHash)
+        if (result.ok) {
+          const reason = keccak256(toHex(`agentscore:verified:job-${jobId}`))
+          const settleTx = await arbiter.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'complete', args: [jobId, reason, '0x'] })
+          log(`arbiter VERIFIED #${jobId} (${result.gotRowCount} rows, checksum ✓) — complete → ${tx(settleTx)}`)
+          await publicClient.waitForTransactionReceipt({ hash: settleTx })
+          await send(`arbiter attest APPROVED #${jobId}`, arbiter, { address: REGISTRY_ADDRESS, abi: registryAbi, functionName: 'attest', args: [jobId, getAddress(job.provider), 0, reason] })
+          setVerdict(jobId.toString(), { outcome: 'approved', checks: result.checks, expectedRowCount: result.expectedRowCount, gotRowCount: result.gotRowCount, verifiedAt: nowSec, settleTx })
+          log(`✅ job #${jobId} settled — USDC released to the agent, verdict attested.`)
+        } else {
+          const reason = keccak256(toHex(`agentscore:rejected-badwork:job-${jobId}`))
+          const settleTx = await arbiter.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'reject', args: [jobId, reason, '0x'] })
+          log(`arbiter REJECTED #${jobId} — deliverable failed verification ${JSON.stringify(result.checks)} → ${tx(settleTx)}`)
+          await publicClient.waitForTransactionReceipt({ hash: settleTx })
+          await send(`arbiter attest REJECTED #${jobId}`, arbiter, { address: REGISTRY_ADDRESS, abi: registryAbi, functionName: 'attest', args: [jobId, getAddress(job.provider), 1, reason] })
+          setVerdict(jobId.toString(), { outcome: 'rejected', checks: result.checks, expectedRowCount: result.expectedRowCount, gotRowCount: result.gotRowCount, verifiedAt: nowSec, settleTx })
+          log(`❌ job #${jobId} rejected — escrow refunded to the client.`)
         }
       }
     } catch (e) {

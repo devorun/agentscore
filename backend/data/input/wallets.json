@@ -1,0 +1,20 @@
+[
+  { "address": "0x1a2b3c4d5e6f70819293a4b5c6d7e8f901020304", "balanceUsd": 245000, "txCount": 1820 },
+  { "address": "0x2b3c4d5e6f7081920304a5b6c7d8e9f012131415", "balanceUsd": 8200, "txCount": 44 },
+  { "address": "0x3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f", "balanceUsd": 156000, "txCount": 610 },
+  { "address": "0x4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70", "balanceUsd": 320, "txCount": 7 },
+  { "address": "0x1a2b3c4d5e6f70819293a4b5c6d7e8f901020304", "balanceUsd": 245000, "txCount": 1820 },
+  { "address": "0x5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081", "balanceUsd": 19500, "txCount": 130 },
+  { "address": "0x6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192", "balanceUsd": 640, "txCount": 210 },
+  { "address": "0x708192a3b4c5d6e7f8091a2b3c4d5e6f70819293", "balanceUsd": 4100, "txCount": 22 },
+  { "address": "0x8192a3b4c5d6e7f8091a2b3c4d5e6f7081929304", "balanceUsd": 112000, "txCount": 90 },
+  { "address": "0x92a3b4c5d6e7f8091a2b3c4d5e6f708192930405", "balanceUsd": 75, "txCount": 3 },
+  { "address": "0x3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f", "balanceUsd": 156000, "txCount": 610 },
+  { "address": "0xa3b4c5d6e7f8091a2b3c4d5e6f70819293040516", "balanceUsd": 33000, "txCount": 480 },
+  { "address": "0xb4c5d6e7f8091a2b3c4d5e6f7081929304051617", "balanceUsd": 2200, "txCount": 1450 },
+  { "address": "0xc5d6e7f8091a2b3c4d5e6f708192930405161718", "balanceUsd": 9800, "txCount": 61 },
+  { "address": "0xd6e7f8091a2b3c4d5e6f70819293040516171819", "balanceUsd": 410000, "txCount": 12 },
+  { "address": "0x5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081", "balanceUsd": 19500, "txCount": 130 },
+  { "address": "0xe7f8091a2b3c4d5e6f7081929304051617181920", "balanceUsd": 1500, "txCount": 18 },
+  { "address": "0xf8091a2b3c4d5e6f708192930405161718192021", "balanceUsd": 88000, "txCount": 305 }
+]

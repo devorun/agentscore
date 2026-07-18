@@ -11,6 +11,8 @@ export const erc8183Abi = parseAbi([
   'function jobCounter() view returns (uint256)',
   'function getJob(uint256 jobId) view returns ((uint256 id, address client, address provider, address evaluator, string description, uint256 budget, uint256 expiredAt, uint8 status, address hook))',
   'function jobHasBudget(uint256 jobId) view returns (bool)',
+  'function createJob(address provider, address evaluator, uint256 expiredAt, string description, address hook) returns (uint256)',
+  'function fund(uint256 jobId, bytes optParams)',
   'function setBudget(uint256 jobId, uint256 amount, bytes optParams)',
   'function submit(uint256 jobId, bytes32 deliverable, bytes optParams)',
   'function complete(uint256 jobId, bytes32 reason, bytes optParams)',

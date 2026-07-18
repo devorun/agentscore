@@ -6,8 +6,11 @@ import { erc8183Abi } from '@/lib/abi'
 import { ARBITER_ADDRESS, ERC8183_ADDRESS, JobStatus, type JobStatusValue } from '@/lib/config'
 import { addressUrl, formatUsdc, shortAddress, txUrl } from '@/lib/format'
 import { useJobEvents, type JobEvent } from '@/hooks/useJobEvents'
+import { useDeliverable } from '@/hooks/useDeliverable'
+import type { ApiDeliverable } from '@/lib/api'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { parseUnits, type Address } from 'viem'
@@ -224,6 +227,7 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
     query: { refetchInterval: 5000 },
   })
   const events = useJobEvents(jobId, true)
+  const deliverable = useDeliverable(jobId)
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-xl bg-surface-1" />
   if (isError || !data)
@@ -271,7 +275,104 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
           </p>
         </div>
       </div>
+      {deliverable.data ? <DeliverablePanel data={deliverable.data} /> : null}
     </div>
+  )
+}
+
+const RISK_TONE: Record<string, string> = {
+  high: 'border-danger/30 bg-danger/10 text-danger',
+  medium: 'border-warning/30 bg-warning/10 text-warning',
+  low: 'border-success/30 bg-success/10 text-success',
+}
+
+function DeliverablePanel({ data }: { data: ApiDeliverable }) {
+  const rejected = data.verdict?.outcome === 'rejected'
+  const checkList: { key: keyof NonNullable<ApiDeliverable['verdict']>['checks']; label: string }[] = [
+    { key: 'schema', label: 'schema' },
+    { key: 'rowCount', label: 'row count' },
+    { key: 'noDuplicates', label: 'no duplicates' },
+    { key: 'checksumMatch', label: 'checksum' },
+    { key: 'exactMatch', label: 'exact match' },
+  ]
+  return (
+    <Card className="flex flex-col gap-4 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Deliverable — real work product</h2>
+        {data.verdict ? (
+          <Badge
+            variant="outline"
+            className={cn(
+              'rounded-md text-[11px] font-medium tracking-wide',
+              rejected ? 'border-danger/30 bg-danger/10 text-danger' : 'border-success/30 bg-success/10 text-success',
+            )}
+          >
+            {rejected ? 'REJECTED BY ARBITER' : 'VERIFIED BY ARBITER'}
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-3">
+        <Row label="Produced by" value={<ExplorerLink href={addressUrl(data.producedBy)}>{shortAddress(data.producedBy)}</ExplorerLink>} />
+        <Row label="Input → output rows" value={<span className="tabular text-foreground">{data.inputRows} → {data.outputRows}</span>} />
+        <Row label="Output hash" value={<span className="tabular text-muted-foreground">{data.outputHash.slice(0, 10)}…</span>} />
+        {data.submittedTx ? <Row label="Submitted" value={<ExplorerLink href={data.submittedTx}>tx</ExplorerLink>} /> : null}
+        {data.verdict?.settleTx ? <Row label={rejected ? 'Rejected' : 'Settled'} value={<ExplorerLink href={data.verdict.settleTx}>tx</ExplorerLink>} /> : null}
+      </div>
+
+      {data.verdict ? (
+        <div className="flex flex-col gap-2">
+          <span className="text-[12px] uppercase tracking-wider text-muted-foreground/70">Arbiter verification</span>
+          <div className="flex flex-wrap gap-1.5">
+            {checkList.map(({ key, label }) => {
+              const pass = data.verdict!.checks[key]
+              return (
+                <span
+                  key={key}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px]',
+                    pass ? 'border-success/30 bg-success/10 text-success' : 'border-danger/30 bg-danger/10 text-danger',
+                  )}
+                >
+                  {pass ? '✓' : '✗'} {label}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[440px] text-[13px]">
+            <thead>
+              <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                <th className="px-3 py-2 text-left font-medium">Address</th>
+                <th className="px-3 py-2 text-left font-medium">Balance (USD)</th>
+                <th className="px-3 py-2 text-left font-medium">Tx count</th>
+                <th className="px-3 py-2 text-left font-medium">Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.output.slice(0, 8).map((r) => (
+                <tr key={r.address} className="border-b border-border last:border-0">
+                  <td className="tabular px-3 py-2 text-muted-foreground">{shortAddress(r.address)}</td>
+                  <td className="tabular px-3 py-2 text-foreground">{r.balanceUsd.toLocaleString('en-US')}</td>
+                  <td className="tabular px-3 py-2 text-foreground">{r.txCount.toLocaleString('en-US')}</td>
+                  <td className="px-3 py-2">
+                    <span className={cn('rounded-md border px-1.5 py-0.5 text-[11px] font-medium', RISK_TONE[r.risk])}>{r.risk}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p className="text-[12px] text-muted-foreground">
+        The agent dedupes the dataset by address and risk-labels each row (deterministic, $0 — no LLM). The arbiter
+        re-derives the same result and checks it before releasing escrow.
+      </p>
+    </Card>
   )
 }
 
