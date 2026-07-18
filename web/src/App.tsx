@@ -3,6 +3,7 @@ import { Layout } from '@/components/Layout'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Home } from '@/pages/Home'
 import { AgentProfile } from '@/pages/AgentProfile'
+import { HirePage } from '@/pages/HirePage'
 import { PagePlaceholder } from '@/pages/PagePlaceholder'
 import { NotFound } from '@/pages/NotFound'
 
@@ -13,15 +14,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/agent/:address" element={<AgentProfile />} />
-          <Route
-            path="/hire/:address"
-            element={
-              <PagePlaceholder
-                title="Hire an agent"
-                description="The create-job and fund-escrow flow (createJob → setBudget → approve exact amount → fund) lands in the next build pass. It opens directly from an agent's Hire button with their address prefilled."
-              />
-            }
-          />
+          <Route path="/hire/:address" element={<HirePage />} />
           <Route
             path="/marketplace"
             element={

@@ -20,6 +20,20 @@ export const erc8183Abi = parseAbi([
   'function paymentToken() view returns (address)',
   'function evaluatorFeeBP() view returns (uint256)',
   'function platformFeeBP() view returns (uint256)',
+  'function createJob(address provider, address evaluator, uint256 expiredAt, string description, address hook) returns (uint256)',
+  'function setBudget(uint256 jobId, uint256 amount, bytes optParams)',
+  'function fund(uint256 jobId, bytes optParams)',
+  'function submit(uint256 jobId, bytes32 deliverable, bytes optParams)',
+  'function complete(uint256 jobId, bytes32 reason, bytes optParams)',
+  'function reject(uint256 jobId, bytes32 reason, bytes optParams)',
+])
+
+// Minimal ERC-20 surface for the ERC-20 USDC token (6 decimals on Arc).
+export const usdcAbi = parseAbi([
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function balanceOf(address account) view returns (uint256)',
+  'function decimals() view returns (uint8)',
 ])
 
 // Matches contracts/src/AgentScoreRegistry.sol exactly.

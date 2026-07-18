@@ -23,14 +23,21 @@ export function AgentCard({ agent }: { agent: ShowcaseAgent }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-[16px] font-semibold text-foreground">{agent.name}</h3>
-            {agent.source === 'demo' ? (
+            {agent.source === 'onchain' ? (
+              <Badge
+                variant="outline"
+                className="h-5 border-success/30 bg-success/10 px-1.5 text-[10px] font-medium tracking-wide text-success"
+              >
+                Live
+              </Badge>
+            ) : (
               <Badge
                 variant="outline"
                 className="h-5 border-border bg-surface-2 px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground"
               >
                 Demo
               </Badge>
-            ) : null}
+            )}
           </div>
           <p className="tabular mt-0.5 text-[12px] text-muted-foreground">{shortAddress(agent.address)}</p>
         </div>

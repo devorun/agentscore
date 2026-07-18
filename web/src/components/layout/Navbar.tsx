@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { Logo } from '@/components/brand/Logo'
 import { BuiltOnArc } from '@/components/brand/BuiltOnArc'
 import { WalletButton } from '@/components/WalletButton'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { cn } from '@/lib/utils'
 
 const NAV = [
@@ -39,7 +40,8 @@ export function Navbar() {
           ))}
         </nav>
 
-        <div className="ml-auto md:ml-2">
+        <div className="ml-auto flex items-center gap-2 md:ml-2">
+          <ThemeToggle />
           <WalletButton />
         </div>
       </div>

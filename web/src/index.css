@@ -4,20 +4,56 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * AgentScore theme — premium layered dark (§7 of the brief).
- * Single source of truth for color. No hardcoded colors anywhere else.
+ * AgentScore theme. Two full palettes, both token-only:
+ *   :root  = light / cream (default when the user's system prefers light)
+ *   .dark  = premium layered dark (product default)
+ * Components read tokens exclusively — no hardcoded colors — so both modes work
+ * everywhere. The <html> class is toggled by the navbar sun/moon control.
  */
 :root {
-  --radius: 0.75rem; /* 12px cards; controls use 9px explicitly */
+  --radius: 0.75rem;
 
-  /* shadcn semantic tokens */
+  --background: #f7f6f2;
+  --foreground: #111110;
+  --card: #ffffff;
+  --card-foreground: #111110;
+  --popover: #ffffff;
+  --popover-foreground: #111110;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-foreground: #ffffff;
+  --secondary: #efede7;
+  --secondary-foreground: #111110;
+  --muted: #efede7;
+  --muted-foreground: #55544e;
+  --accent: #efede7;
+  --accent-foreground: #111110;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --border: #e4e2db;
+  --input: #e4e2db;
+  --ring: #3b82f6;
+
+  --surface-1: #ffffff;
+  --surface-2: #efede7;
+  --neon: #3b82f6;
+  --arc-blue: #2563eb;
+  --cream: #55544e;
+  --success: #0f7b55;
+  --warning: #b45309;
+  --danger: #b3261e;
+  --focus-glow: rgba(37, 99, 235, 0.25);
+}
+
+.dark {
   --background: #0a0a0b;
   --foreground: #fafaf7;
   --card: #131316;
   --card-foreground: #fafaf7;
   --popover: #1b1b1f;
   --popover-foreground: #fafaf7;
-  --primary: #2775ca; /* Arc blue */
+  --primary: #2775ca;
+  --primary-hover: #4d8df0;
   --primary-foreground: #fafaf7;
   --secondary: #1b1b1f;
   --secondary-foreground: #fafaf7;
@@ -29,9 +65,8 @@
   --destructive-foreground: #fafaf7;
   --border: #26262b;
   --input: #26262b;
-  --ring: #4d8df0; /* neon focus */
+  --ring: #4d8df0;
 
-  /* brand + semantic extensions */
   --surface-1: #131316;
   --surface-2: #1b1b1f;
   --neon: #4d8df0;
@@ -51,6 +86,7 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -87,7 +123,7 @@
     @apply border-border;
   }
   html {
-    color-scheme: dark;
+    color-scheme: light dark;
   }
   body {
     @apply bg-background text-foreground;
@@ -95,7 +131,6 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-  /* Figures and addresses (§7): Inter with tabular figures. */
   .tabular {
     font-variant-numeric: tabular-nums;
   }

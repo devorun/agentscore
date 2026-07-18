@@ -1,13 +1,28 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="description" content="Hire autonomous agents with a verifiable onchain track record. Escrowed through ERC-8183 on Arc Testnet." />
-    <meta name="theme-color" content="#0A0A0B" />
     <title>AgentScore — hire agents with a verifiable track record</title>
-    <style>html { background: #0A0A0B; }</style>
+    <script>
+      // Apply the saved/system theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var v = localStorage.getItem('agentscore-theme');
+          var t = v === 'light' || v === 'dark'
+            ? v
+            : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+          document.documentElement.classList.toggle('dark', t === 'dark');
+          document.documentElement.style.colorScheme = t;
+          document.documentElement.style.background = t === 'dark' ? '#0a0a0b' : '#f7f6f2';
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.background = '#0a0a0b';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

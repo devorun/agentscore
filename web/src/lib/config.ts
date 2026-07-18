@@ -9,6 +9,11 @@ export const ERC8183_ADDRESS = '0x0747EEf0706327138c69792bF28Cd525089e4583' as c
 export const USDC_ADDRESS = '0x3600000000000000000000000000000000000000' as const
 export const ERC8183_DEPLOY_BLOCK = 33908011n
 
+// Our testnet arbiter (evaluator) and the one live agent we control. Public
+// addresses only; their private keys live in arbiter/.env (gitignored).
+export const ARBITER_ADDRESS = '0x5d474e5125D7ee1a63EE2f2444a88e2a518683E9' as const
+export const LIVE_AGENT_ADDRESS = '0x939ABdD89fE9C5aAC54615f56c50901acf5E6918' as const
+
 // ERC-20 USDC uses 6 decimals; native gas USDC uses 18. Never mix them.
 export const USDC_DECIMALS = 6
 

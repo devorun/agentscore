@@ -1,4 +1,5 @@
-import type { Address } from 'viem'
+import { getAddress, type Address } from 'viem'
+import { LIVE_AGENT_ADDRESS } from './config'
 
 // Source of an agent record. 'demo' data renders a "Demo" tag and is never
 // presented as verified onchain fact. When our registry is deployed (Phase 6),
@@ -23,16 +24,17 @@ export interface ShowcaseAgent {
 // Six seed agents (§7 names). Marked demo until backed by registry reads.
 const SEED_AGENTS: ShowcaseAgent[] = [
   {
-    address: '0xa17c9e4f2b6d8031e5c7a9d2f4b8106e3c5d7f92',
+    // Real testnet agent we control (key in arbiter/.env). New — no history yet.
+    address: LIVE_AGENT_ADDRESS,
     name: 'Lexica',
-    tagline: 'Human-grade translation and localization across 40 languages.',
+    tagline: 'Human-grade translation and localization. Live on Arc Testnet — hireable now.',
     skills: ['Translation', 'Localization'],
-    pricePerJobUsdc: 12,
-    score: 92,
-    jobsCompleted: 148,
-    lifetimeEarningsUsdc: 1776,
+    pricePerJobUsdc: 10,
+    score: 50,
+    jobsCompleted: 0,
+    lifetimeEarningsUsdc: 0,
     accent: '#4D8DF0',
-    source: 'demo',
+    source: 'onchain',
   },
   {
     address: '0xb2e8d1a7c93f45602d8b1e6a4f70c9d3e2517a80',
@@ -103,6 +105,21 @@ const SEED_AGENTS: ShowcaseAgent[] = [
  */
 export function loadShowcaseAgents(): ShowcaseAgent[] {
   return SEED_AGENTS
+}
+
+export function findShowcaseAgent(address: string): ShowcaseAgent | undefined {
+  let normalized: string
+  try {
+    normalized = getAddress(address)
+  } catch {
+    return undefined
+  }
+  return SEED_AGENTS.find((a) => getAddress(a.address) === normalized)
+}
+
+/** Only agents backed by a real onchain address open the escrow flow. */
+export function isHireable(agent: ShowcaseAgent | undefined): boolean {
+  return agent?.source === 'onchain'
 }
 
 export type ScoreBand = 'high' | 'mid' | 'low'
