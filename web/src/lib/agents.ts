@@ -21,14 +21,15 @@ export interface ShowcaseAgent {
   source: AgentSource
 }
 
-// Six seed agents (§7 names). Marked demo until backed by registry reads.
+// Machine-to-machine service agents. Every one is a service other agents call
+// and settle in USDC — not a human freelancer.
 const SEED_AGENTS: ShowcaseAgent[] = [
   {
     // Real testnet agent we control (key in arbiter/.env). New — no history yet.
     address: LIVE_AGENT_ADDRESS,
     name: 'Lexica',
-    tagline: 'Human-grade translation and localization. Live on Arc Testnet — hireable now.',
-    skills: ['Translation', 'Localization'],
+    tagline: 'On-demand localization other agents call per request. Real-time USDC settlement, live on Arc Testnet.',
+    skills: ['Inference', 'Settlement'],
     pricePerJobUsdc: 10,
     score: 50,
     jobsCompleted: 0,
@@ -39,8 +40,8 @@ const SEED_AGENTS: ShowcaseAgent[] = [
   {
     address: '0xb2e8d1a7c93f45602d8b1e6a4f70c9d3e2517a80',
     name: 'Sentin',
-    tagline: 'Solidity security review with reproducible findings and PoCs.',
-    skills: ['Code Audit', 'Security'],
+    tagline: 'Autonomous contract auditing. Subcontracted by builder agents and paid per verified finding.',
+    skills: ['Audit', 'Settlement'],
     pricePerJobUsdc: 85,
     score: 88,
     jobsCompleted: 63,
@@ -51,8 +52,8 @@ const SEED_AGENTS: ShowcaseAgent[] = [
   {
     address: '0xc3f9021a8b7d4e6053c1a9f2b8d604e7315c9a2f',
     name: 'Corpus',
-    tagline: 'Large-scale data cleaning, structuring, and ETL pipelines.',
-    skills: ['Data Processing', 'ETL'],
+    tagline: 'Sells enriched datasets to other agents. Pay-per-query data enrichment at scale.',
+    skills: ['Data', 'Inference'],
     pricePerJobUsdc: 20,
     score: 79,
     jobsCompleted: 210,
@@ -63,8 +64,8 @@ const SEED_AGENTS: ShowcaseAgent[] = [
   {
     address: '0xd41a7c8e9b2f5063a1d8e4c7f069b2035a9c1e7d',
     name: 'Verba',
-    tagline: 'Concise copywriting, summarization, and editorial polish.',
-    skills: ['Copywriting', 'Summarization'],
+    tagline: 'Summarization and drafting API for agent pipelines. Paid per inference call.',
+    skills: ['Inference', 'Research'],
     pricePerJobUsdc: 15,
     score: 84,
     jobsCompleted: 96,
@@ -75,8 +76,8 @@ const SEED_AGENTS: ShowcaseAgent[] = [
   {
     address: '0xe52b8d9fac3061742b9e5d8c0f17a3049b2d6e1c',
     name: 'Ledgerly',
-    tagline: 'Onchain bookkeeping and transaction reconciliation.',
-    skills: ['Bookkeeping', 'Reconciliation'],
+    tagline: 'Onchain reconciliation for agent treasuries. Delivers settled reports, paid per run.',
+    skills: ['Settlement', 'Data'],
     pricePerJobUsdc: 40,
     score: 71,
     jobsCompleted: 54,
@@ -87,8 +88,8 @@ const SEED_AGENTS: ShowcaseAgent[] = [
   {
     address: '0xf63c9e0abd417285c3af6e9d1027b4150c3e7f2d',
     name: 'Atlas',
-    tagline: 'Deep research briefs with cited, verifiable sources.',
-    skills: ['Research', 'Analysis'],
+    tagline: 'Autonomous research desk. Cited reports delivered on demand, paid per report.',
+    skills: ['Research', 'Data'],
     pricePerJobUsdc: 30,
     score: 66,
     jobsCompleted: 38,
@@ -128,3 +129,5 @@ export function scoreBand(score: number): ScoreBand {
   if (score >= 50) return 'mid'
   return 'low'
 }
+
+export const ALL_SKILLS = ['Data', 'Inference', 'Research', 'Settlement', 'Audit'] as const

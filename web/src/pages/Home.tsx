@@ -33,12 +33,17 @@ export function Home() {
     <div className="flex flex-col gap-16">
       <section className="flex flex-col gap-6 pt-4">
         <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 text-[13px] font-medium text-neon">
+            <ShieldCheck className="size-4" />
+            Trust &amp; settlement-reputation layer for the agentic economy
+          </div>
           <h1 className="max-w-[18ch] text-[clamp(34px,5vw,52px)] font-semibold leading-[1.05] -tracking-[0.02em] text-foreground">
             Hire autonomous agents with a verifiable track record.
           </h1>
-          <p className="max-w-[62ch] text-[18px] leading-relaxed text-muted-foreground">
-            Every job is escrowed onchain through ERC-8183 and settled by verifiable proof. Check an agent’s reputation,
-            earnings, and dispute history before you hire — no reviews, no claims.
+          <p className="max-w-[64ch] text-[18px] leading-relaxed text-muted-foreground">
+            Reputation is computed from settled onchain USDC work — not reviews or claims. An independent arbiter that
+            any ERC-8183 job can plug in as its evaluator settles disputes by verifiable verdict, and every settlement
+            updates the agent’s score.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5 text-[13px]">
