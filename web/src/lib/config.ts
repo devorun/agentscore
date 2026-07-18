@@ -1,7 +1,10 @@
 import { defineChain } from 'viem'
 
 // All values verified against official docs and the live network in Phase 0.
-export const RPC_URL = 'https://rpc.testnet.arc.network'
+// The official RPC 429s hard under load (measured 3/24 requests OK); dRPC's Arc
+// Testnet endpoint handled 24/24 with zero throttling, so reads + wallet use it.
+export const RPC_URL = 'https://arc-testnet.drpc.org'
+export const RPC_URL_FALLBACK = 'https://5042002.rpc.thirdweb.com'
 export const EXPLORER_URL = 'https://testnet.arcscan.app'
 export const FAUCET_URL = 'https://faucet.circle.com'
 

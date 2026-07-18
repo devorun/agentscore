@@ -4,7 +4,9 @@ import { Badge } from '@/components/ui/badge'
 
 export interface TermLine {
   text: string
-  tone?: 'default' | 'muted' | 'accent' | 'success' | 'warning'
+  tone?: 'default' | 'muted' | 'accent' | 'success' | 'warning' | 'danger'
+  /** Optional real Arcscan tx link rendered after the line. */
+  href?: string
 }
 
 const TONE: Record<NonNullable<TermLine['tone']>, string> = {
@@ -13,6 +15,7 @@ const TONE: Record<NonNullable<TermLine['tone']>, string> = {
   accent: 'text-[#4d8df0]',
   success: 'text-[#6ee7b7]',
   warning: 'text-[#fbbf24]',
+  danger: 'text-[#f87171]',
 }
 
 /**
@@ -20,11 +23,23 @@ const TONE: Record<NonNullable<TermLine['tone']>, string> = {
  * steps. Monospace and a fixed dark surface are intentional here (and, per the
  * brief, allowed ONLY in this panel). Auto-plays with zero human interaction.
  */
-export function AgentMindTerminal({ lines, simulation = true }: { lines: TermLine[]; simulation?: boolean }) {
-  const [shown, setShown] = useState(0)
+export function AgentMindTerminal({
+  lines,
+  simulation = true,
+  animate = true,
+}: {
+  lines: TermLine[]
+  simulation?: boolean
+  animate?: boolean
+}) {
+  const [shown, setShown] = useState(animate ? 0 : lines.length)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (!animate) {
+      setShown(lines.length)
+      return
+    }
     setShown(0)
     let i = 0
     const id = setInterval(() => {
@@ -33,7 +48,7 @@ export function AgentMindTerminal({ lines, simulation = true }: { lines: TermLin
       if (i >= lines.length) clearInterval(id)
     }, 650)
     return () => clearInterval(id)
-  }, [lines])
+  }, [lines, animate])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
@@ -64,6 +79,16 @@ export function AgentMindTerminal({ lines, simulation = true }: { lines: TermLin
         {lines.slice(0, shown).map((line, i) => (
           <div key={i} className={TONE[line.tone ?? 'default']}>
             {line.text}
+            {line.href ? (
+              <a
+                href={line.href}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="ml-2 text-[#4d8df0] hover:underline"
+              >
+                tx ↗
+              </a>
+            ) : null}
           </div>
         ))}
         {shown < lines.length ? <span className="inline-block h-3.5 w-2 animate-pulse bg-[#4d8df0] align-middle" /> : null}

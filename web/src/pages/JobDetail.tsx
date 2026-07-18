@@ -4,7 +4,8 @@ import { ArrowRight, ArrowUpRight, Check } from 'lucide-react'
 import { findSeedJob, type SeedJob } from '@/lib/jobs'
 import { erc8183Abi } from '@/lib/abi'
 import { ARBITER_ADDRESS, ERC8183_ADDRESS, JobStatus, type JobStatusValue } from '@/lib/config'
-import { addressUrl, formatUsdc, shortAddress } from '@/lib/format'
+import { addressUrl, formatUsdc, shortAddress, txUrl } from '@/lib/format'
+import { useJobEvents, type JobEvent } from '@/hooks/useJobEvents'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
 import { Card } from '@/components/ui/card'
@@ -107,6 +108,60 @@ function buildScript(job: SeedJob): TermLine[] {
   return lines
 }
 
+// Real onchain events (from the reference contract + our registry) → terminal
+// lines, each linking to its Arcscan transaction. Used for live jobs.
+function buildLiveLines(events: JobEvent[], status: JobStatusValue, budget: bigint): TermLine[] {
+  const lines: TermLine[] = []
+  for (const e of events) {
+    const href = txUrl(e.txHash)
+    switch (e.name) {
+      case 'JobCreated':
+        lines.push({
+          text: `> job #${e.args.jobId} created · ${shortAddress(e.args.client)} → ${shortAddress(e.args.provider)}`,
+          tone: 'accent',
+          href,
+        })
+        break
+      case 'BudgetSet':
+        lines.push({ text: `> agent set price ${formatUsdc(e.args.amount)}`, href })
+        break
+      case 'JobFunded':
+        lines.push({ text: `> client funded escrow ${formatUsdc(e.args.amount)}`, href })
+        break
+      case 'JobSubmitted':
+        lines.push({ text: `> agent submitted deliverable ${String(e.args.deliverable).slice(0, 12)}…`, href })
+        break
+      case 'JobCompleted':
+        lines.push({ text: `> AGENTSCORE.ARBITER: verdict complete`, tone: 'accent', href })
+        break
+      case 'PaymentReleased':
+        lines.push({ text: `> released ${formatUsdc(e.args.amount)} → agent`, tone: 'success', href })
+        break
+      case 'JobRejected':
+        lines.push({ text: `> AGENTSCORE.ARBITER: verdict reject`, tone: 'danger', href })
+        break
+      case 'Refunded':
+        lines.push({ text: `> escrow refunded ${formatUsdc(e.args.amount)} → client`, tone: 'warning', href })
+        break
+      case 'VerdictAttested':
+        lines.push({
+          text: `> verdict attested to registry (${Number(e.args.outcome) === 0 ? 'APPROVED' : 'REJECTED'})`,
+          tone: 'success',
+          href,
+        })
+        break
+    }
+  }
+  if (status === JobStatus.Open && budget === 0n) lines.push({ text: `> awaiting the agent to set the price…`, tone: 'warning' })
+  else if (status === JobStatus.Open) lines.push({ text: `> awaiting the client to fund escrow…`, tone: 'warning' })
+  else if (status === JobStatus.Funded) lines.push({ text: `> agent is working — submitting shortly…`, tone: 'warning' })
+  else if (status === JobStatus.Submitted) lines.push({ text: `> arbiter verifying deliverable…`, tone: 'warning' })
+  else if (status === JobStatus.Completed)
+    lines.push({ text: `> loop complete · settled onchain · 0 human clicks after funding`, tone: 'success' })
+  if (lines.length === 0) lines.push({ text: `> streaming onchain events…`, tone: 'muted' })
+  return lines
+}
+
 function SeedJobDetail({ job }: { job: SeedJob }) {
   const budget6 = parseUnits(String(job.budgetUsdc), USDC_DECIMALS)
   return (
@@ -166,7 +221,9 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
     abi: erc8183Abi,
     functionName: 'getJob',
     args: [jobId],
+    query: { refetchInterval: 5000 },
   })
+  const events = useJobEvents(jobId, true)
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-xl bg-surface-1" />
   if (isError || !data)
@@ -184,18 +241,7 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
     budget: bigint
     status: number
   }
-  const script: TermLine[] = buildScript({
-    id: `#${jobId}`,
-    title: job.description || 'Onchain job',
-    skill: 'Data',
-    budgetUsdc: Number(job.budget) / 1e6,
-    status: job.status as JobStatusValue,
-    hirer: { name: 'Client', address: job.client, type: 'agent' },
-    provider: { name: 'Provider', address: job.provider },
-    description: '',
-    createdAt: 0,
-    demo: true,
-  })
+  const lines = buildLiveLines(events.data ?? [], job.status as JobStatusValue, job.budget)
 
   return (
     <div className="flex flex-col gap-6">
@@ -219,8 +265,10 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
           </Card>
         </div>
         <div className="flex flex-col gap-2">
-          <AgentMindTerminal lines={script} simulation />
-          <p className="text-[12px] text-muted-foreground">Reconstructed from onchain state.</p>
+          <AgentMindTerminal lines={lines} simulation={false} animate={false} />
+          <p className="text-[12px] text-muted-foreground">
+            Live — streamed from this job’s real onchain events. Each step links to its Arcscan transaction.
+          </p>
         </div>
       </div>
     </div>

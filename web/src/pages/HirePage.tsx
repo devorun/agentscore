@@ -312,6 +312,12 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
         onApprove={onApprove}
         onFund={onFund}
       />
+
+      {jobId !== undefined ? (
+        <Link to={`/job/${jobId}`} className="text-center text-[14px] text-neon hover:opacity-80">
+          Watch the autonomous loop live on the job page →
+        </Link>
+      ) : null}
     </div>
   )
 }
