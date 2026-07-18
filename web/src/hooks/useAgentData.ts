@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { type Address, getAddress, keccak256, toHex } from 'viem'
+import { type Address, getAddress, keccak256, parseUnits, toHex } from 'viem'
 import { publicClient, readChunked } from '../lib/client'
 import { erc8183Abi, registryAbi } from '../lib/abi'
-import { ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, type JobStatusValue } from '../lib/config'
+import { API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
+import { apiAgent, STATUS_INDEX, txHashFromUrl } from '../lib/api'
 import { fetchLogsByTopic, padAddressTopic } from '../lib/explorer'
 import { type AgentMetrics, computeScore, type ScoreBreakdown } from '../lib/score'
 
@@ -55,7 +56,46 @@ function decodeAmount(data: `0x${string}`): bigint {
   return BigInt(data.slice(0, 66))
 }
 
+// Prefer the backend API for the reputation core (score, metrics, job history);
+// registry profile + verdicts are quick direct reads. Falls back entirely to
+// chain if the API is unset or unreachable.
 async function loadAgentData(address: Address): Promise<AgentData> {
+  if (API_URL) {
+    try {
+      const [api, profile, verdicts] = await Promise.all([
+        apiAgent(address),
+        loadRegistryProfile(address),
+        loadVerdicts(address),
+      ])
+      const metrics: AgentMetrics = {
+        totalJobs: api.metrics.totalJobs,
+        completed: api.metrics.completed,
+        rejected: api.metrics.rejected,
+        expired: api.metrics.expired,
+        expiredUnfunded: 0,
+        settled6: parseUnits(api.metrics.settledValueUsdc, USDC_DECIMALS),
+        earnings6: parseUnits(api.metrics.lifetimeEarningsUsdc, USDC_DECIMALS),
+      }
+      const jobs: JobRow[] = api.jobs.map((j) => ({
+        jobId: BigInt(j.jobId),
+        status: (STATUS_INDEX[j.status] ?? 0) as JobStatusValue,
+        budget6: parseUnits(j.budgetUsdc, USDC_DECIMALS),
+        client: j.client,
+        evaluator: j.evaluator,
+        description: j.description,
+        expiredAt: 0n,
+        createdAt: j.createdAt,
+        createdTx: txHashFromUrl(j.tx),
+      }))
+      return { address, metrics, breakdown: api.breakdown, jobs, truncated: api.truncated, profile, verdicts }
+    } catch {
+      // API down — fall through to direct chain reads.
+    }
+  }
+  return loadAgentDataFromChain(address)
+}
+
+async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   const topic = padAddressTopic(address)
 
   // Jobs where this address is the provider (JobCreated topic3 = provider).

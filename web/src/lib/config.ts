@@ -23,6 +23,10 @@ export const USDC_DECIMALS = 6
 // The public RPC rejects eth_getLogs ranges above 10,000 blocks (error -32614).
 export const GETLOGS_MAX_RANGE = 10000n
 
+// Optional backend API base. When set, reputation/jobs reads prefer it and fall
+// back to direct chain reads if it is unreachable.
+export const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || undefined
+
 const registryEnv = import.meta.env.VITE_REGISTRY_ADDRESS as string | undefined
 export const REGISTRY_ADDRESS =
   registryEnv && registryEnv.length === 42 ? (registryEnv as `0x${string}`) : undefined

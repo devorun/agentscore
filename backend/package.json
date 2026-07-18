@@ -1,0 +1,27 @@
+{
+  "name": "agentscore-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AgentScore reputation API + arbiter worker (Node/TS, Hono + viem).",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "api": "cross-env API_ONLY=1 tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.14",
+    "viem": "^2.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.0",
+    "vitest": "^2.1.8"
+  }
+}

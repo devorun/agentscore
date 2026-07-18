@@ -1,0 +1,12 @@
+# Cloudflare Workers config for the read-only reputation API (free tier, no card).
+# Deploy: npm i -g wrangler && wrangler login && wrangler deploy
+name = "agentscore-api"
+main = "src/cf.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Public config only. The Workers API is read-only — no signing keys here.
+[vars]
+ARC_RPC = "https://arc-testnet.drpc.org"
+REGISTRY_ADDRESS = "0x1489b56AaE4BB63e9793a151C12964B19bC99d38"
+API_ONLY = "1"
