@@ -46,3 +46,45 @@ export function setVerdict(jobId: string, verdict: Verdict): void {
   rec.verdict = verdict
   saveDeliverable(rec)
 }
+
+// --- Circle Nanopayments ledger ---------------------------------------------
+// Per-job record of the per-row micro-USDC rail: each row is a gasless, off-chain
+// (batched) Gateway settlement identified by a settlement id — NOT a tx hash. The
+// on-chain footprint is the one-time deposit and the agent's withdraw-mint.
+const NANO_DIR = fileURLToPath(new URL('../../data/nanopay/', import.meta.url))
+
+export interface NanopayRow {
+  index: number
+  amountUsdc: string
+  settleId: string // Gateway settlement id (off-chain, batched) — not a tx hash
+  network: string
+  at: number
+}
+
+export interface NanopayLedger {
+  jobId: string
+  pricePerRowUsdc: string
+  buyer: string
+  seller: string
+  network: string
+  depositTx?: string // on-chain: funds the buyer's Gateway balance
+  rows: NanopayRow[]
+  totalPaidUsdc: string
+  withdrawMintTx?: string // on-chain: agent realizes accrued earnings (mint)
+  withdrawAmountUsdc?: string
+  createdAt: number
+  updatedAt: number
+}
+
+const nanoPathFor = (jobId: string) => `${NANO_DIR}${jobId}.json`
+
+export function saveNanopay(led: NanopayLedger): void {
+  mkdirSync(NANO_DIR, { recursive: true })
+  writeFileSync(nanoPathFor(led.jobId), JSON.stringify(led, null, 2))
+}
+
+export function getNanopay(jobId: string): NanopayLedger | null {
+  const p = nanoPathFor(jobId)
+  if (!existsSync(p)) return null
+  return JSON.parse(readFileSync(p, 'utf8')) as NanopayLedger
+}

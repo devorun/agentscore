@@ -1,6 +1,6 @@
-# AgentScore — Project Status & Handoff
+# AgentScore — Project Status
 
-Living handoff so a fresh session can continue with zero prior context. **To resume: read [`AGENTSCORE_BRIEF.md`](AGENTSCORE_BRIEF.md) (the binding source of truth), then this file.** Last updated 2026-07-19.
+Current state of the project: what is built and proven, key addresses and network facts, run commands, and the remaining roadmap. Last updated 2026-07-19.
 
 AgentScore is a verifiable **reputation + settlement layer and independent AI arbiter** for the agentic economy, built on Arc Testnet. Positioning: infrastructure any ERC-8183 job can plug into — not a freelance board.
 
@@ -22,6 +22,7 @@ Endpoints:
 - `GET /jobs` — recent ERC-8183 jobs
 - `GET /arbiter/verdicts` — verdicts our arbiter attested to the registry
 - `GET /deliverable/:jobId` — the real work product + the arbiter's verification checks (Node-only)
+- `GET /nanopayments/:jobId` — the Circle Nanopayments per-row ledger for a job, off-chain rows + on-chain deposit/withdraw-mint (Node-only)
 
 Worker: the agent does **real deterministic work** (dedupe + risk-label a wallet dataset, $0, no LLM), hashes the actual output, submits it; the arbiter **re-derives the correct result and verifies** (schema / row count / no-duplicates / checksum-vs-onchain / exact-match) before `complete`, else `reject` + refund; verdict attested to the registry. 17 tests pass (`npm test`).
 
@@ -35,7 +36,13 @@ Pages: **Home** (agent showcase + secondary address lookup), **`/agent/:address`
 - **`#158648`** — **real work verified + settled**: agent deduped 18→15 rows + risk-labeled, submitted that output's hash; arbiter re-derived, all 5 checks passed → 2 USDC released to the agent.
 - **`#158649`** — **tampered → rejected + refunded**: faulty run left duplicates (18→18); arbiter caught it (✗ row count / ✗ no-duplicates / ✗ exact-match, though checksum held) → rejected, escrow refunded to the client.
 
-Latest commit: `3cb2385`. Everything is committed; working tree clean.
+### Circle developer tools (live on Arc Testnet)
+- **Nanopayments + Gateway** (`backend/src/lib/nanopay.ts`) — the enrichment agent is paid **per row** in micro-USDC over x402 (gasless EIP-3009), settled by **Circle Gateway**, run **alongside** the escrow (never replacing it): off-chain batched per-row settlements plus an on-chain Gateway **deposit** (`0xdb66f74f…`) and agent **withdraw-mint** (`0x49390833…`), surfaced on the job page with an explicit off-chain-vs-on-chain split. Permissionless on testnet — no Circle API key. Gated by `NANOPAY_ENABLED` (default off). Demo: `NANOPAY_ENABLED=1 npm run demo:nanopay`.
+- **Wallets (developer-controlled)** — a Circle Wallet signs as a **separate** "Circle-signed" agent (`0xC5143cCdF93A90eC0D2e30A62F36E36D4CB0Ef2c`), selected by `SIGNER_MODE=circle` (default `raw`). In job **`#158772`** it signed `setBudget` + `submit`; the raw-key arbiter verified + settled. The proven agent `0x939A…` and every existing proof are untouched. Provision: `npm run circle:setup`; demo: `SIGNER_MODE=circle npm run demo:circle`.
+- **Paymaster** — deliberately **skipped**: USDC is already Arc's native gas token, so it is redundant (and Arc isn't on Circle Paymaster's chain list). Documented as a considered choice.
+- Fresh escrow reproductions proving the loop is intact after these additions: **`#158721`** (settle) and **`#158723`** (reject + refund).
+
+Everything above is committed; working tree clean.
 
 ---
 
@@ -54,10 +61,11 @@ Latest commit: `3cb2385`. Everything is committed; working tree clean.
 | **AgentScoreRegistry (ours)** | `0x1489b56AaE4BB63e9793a151C12964B19bC99d38` |
 | **Arbiter** (evaluator, admin) | `0x5d474e5125D7ee1a63EE2f2444a88e2a518683E9` |
 | **Agent** (provider, "Lexica") | `0x939ABdD89fE9C5aAC54615f56c50901acf5E6918` |
+| **Circle-signed agent** (developer-controlled Circle Wallet, `SIGNER_MODE=circle`) | `0xC5143cCdF93A90eC0D2e30A62F36E36D4CB0Ef2c` |
 | **Demo client** (scripts) | `0x02d2cFDB15Fe4D48820dF2431B2Bd3182636D34b` |
 | **User burner client** | `0xA42306d86508225394A651d03Be3F7c82D83305b` |
 
-All addresses are public. Their **private keys are testnet-only and live in gitignored `.env` files** (`backend/.env`, `arbiter/.env`) — never committed.
+All addresses are public. The raw-key wallets' **private keys are testnet-only and live in gitignored `.env` files** (`backend/.env`, `arbiter/.env`) — never committed. The **Circle-signed agent's key is custodied by Circle** (developer-controlled wallet); we hold only `CIRCLE_API_KEY` + `CIRCLE_ENTITY_SECRET` in gitignored `backend/.env`, with the recovery file in gitignored `backend/.circle/`.
 
 **Why dRPC, not the official RPC:** the official `rpc.testnet.arc.network` rate-limits hard under load (measured 3/24 requests OK in a burst; 21 × HTTP 429), which broke live flows. dRPC and thirdweb both handled 24/24. We switched reads, the worker, and the wallet network params to dRPC.
 
@@ -78,6 +86,11 @@ cd web && npm install && npm run dev
 
 # Run the two-job demo (backend must be running): real settle + tampered reject
 cd backend && npm run demo
+
+# Circle developer tools (optional; Arc Testnet, $0, no card)
+cd backend && NANOPAY_ENABLED=1 npm run demo:nanopay   # per-row nanopayments over Gateway
+cd backend && npm run circle:setup                     # provision the developer-controlled Circle Wallet (writes CIRCLE_* to .env)
+cd backend && SIGNER_MODE=circle npm run demo:circle   # one Circle-signed job (Circle wallet signs setBudget + submit)
 ```
 
 Do **not** also run `arbiter/run.mjs` — that standalone watcher is **superseded by the backend worker** and would double-act on the same jobs.
@@ -102,7 +115,7 @@ Checks: `cd contracts && forge test` · `cd backend && npm test` · `cd web && n
 
 ## 5. Remaining roadmap (in order)
 
-1. **Circle tools integration** — Wallets, Nanopayments, and CCTP, to deepen the "settlement-native" story.
+1. **Circle tools integration** — Nanopayments + Gateway and developer-controlled Wallets are **done** (see §1: proofs `0xdb66f74f…` / `0x49390833…` and job `#158772`). Remaining stretch: **CCTP cross-chain hire** (fund an Arc job with USDC held on another testnet, via Arc App Kit's Bridge).
 2. **Deploy** — frontend to Cloudflare Pages, read-only API to Cloudflare Workers (worker stays local). $0, no card. Deploy **once at the very end** to avoid redeploys.
 3. **Publish repo to GitHub** — behind the privacy gate: enumerate exactly what will be pushed and get explicit approval first; confirm no secrets, no local paths, no username in history.
 4. **3-minute video + submission package** — demo the autonomous loop and the real-work verify/reject, link Arcscan proofs, write the submission.
@@ -112,11 +125,10 @@ Checks: `cd contracts && forge test` · `cd backend && npm test` · `cd web && n
 ## 6. Repository layout
 
 ```
-AGENTSCORE_BRIEF.md   source of truth (design, security, scope)
-PROJECT_STATUS.md     this handoff
+PROJECT_STATUS.md     project status (this file)
 README.md             overview + roadmap (ERC-8004 interop noted)
 contracts/            Foundry — AgentScoreRegistry + tests
-backend/              Node+TS — reputation API + real-work arbiter worker (+ Dockerfile, wrangler.toml)
+backend/              Node+TS — reputation API + arbiter worker; Circle nanopayments (lib/nanopay.ts), signer adapter (lib/signer.ts), circle-setup.ts, demo-nanopay.ts, demo-circle.ts (+ Dockerfile, wrangler.toml)
 web/                  Vite React frontend (Tailwind + shadcn/ui)
 arbiter/              legacy standalone watcher (superseded by backend worker); holds gitignored .env
 ```

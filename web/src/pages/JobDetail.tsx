@@ -7,7 +7,8 @@ import { ARBITER_ADDRESS, ERC8183_ADDRESS, JobStatus, type JobStatusValue } from
 import { addressUrl, formatUsdc, shortAddress, txUrl } from '@/lib/format'
 import { useJobEvents, type JobEvent } from '@/hooks/useJobEvents'
 import { useDeliverable } from '@/hooks/useDeliverable'
-import type { ApiDeliverable } from '@/lib/api'
+import { useNanopay } from '@/hooks/useNanopay'
+import type { ApiDeliverable, ApiNanopay } from '@/lib/api'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
@@ -228,6 +229,7 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
   })
   const events = useJobEvents(jobId, true)
   const deliverable = useDeliverable(jobId)
+  const nanopay = useNanopay(jobId)
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-xl bg-surface-1" />
   if (isError || !data)
@@ -276,6 +278,7 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
         </div>
       </div>
       {deliverable.data ? <DeliverablePanel data={deliverable.data} /> : null}
+      {nanopay.data ? <NanopaymentsPanel data={nanopay.data} /> : null}
     </div>
   )
 }
@@ -372,6 +375,78 @@ function DeliverablePanel({ data }: { data: ApiDeliverable }) {
         The agent dedupes the dataset by address and risk-labels each row (deterministic, $0 — no LLM). The arbiter
         re-derives the same result and checks it before releasing escrow.
       </p>
+    </Card>
+  )
+}
+
+function NanopaymentsPanel({ data }: { data: ApiNanopay }) {
+  const { onchain, offchain } = data
+  return (
+    <Card className="flex flex-col gap-4 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Nanopayments — per-row settlement</h2>
+        <Badge variant="outline" className="rounded-md border-neon/30 bg-neon/10 text-[11px] font-medium tracking-wide text-neon">
+          Circle Gateway
+        </Badge>
+      </div>
+      <p className="max-w-[70ch] text-[13px] leading-relaxed text-muted-foreground">
+        The enrichment agent is also paid <span className="text-foreground">per row</span> over Circle Gateway — a
+        machine-to-machine micropayment rail running <span className="text-foreground">alongside</span> the ERC-8183
+        escrow, which stays the settlement of record. Each row is a gasless authorization; the only on-chain footprint is
+        the one-time deposit and the agent’s withdrawal.
+      </p>
+
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-4">
+        <Row label="Price / row" value={<span className="tabular text-foreground">{data.pricePerRowUsdc} USDC</span>} />
+        <Row label="Rows metered" value={<span className="tabular text-foreground">{offchain.rowCount}</span>} />
+        <Row label="Total metered" value={<span className="tabular text-foreground">{offchain.totalPaidUsdc} USDC</span>} />
+        <Row label="Paid to agent" value={<ExplorerLink href={addressUrl(data.seller)}>{shortAddress(data.seller)}</ExplorerLink>} />
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-lg border border-neon/20 bg-neon/5 p-3">
+        <span className="inline-flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wider text-neon">
+          <span className="size-1.5 rounded-full bg-neon" /> On-chain · Arc Testnet
+        </span>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-2">
+          <Row
+            label="Gateway deposit"
+            value={onchain.deposit ? <ExplorerLink href={onchain.deposit}>Arcscan</ExplorerLink> : <span className="text-muted-foreground">—</span>}
+          />
+          <Row
+            label={`Agent withdraw-mint${onchain.withdrawAmountUsdc ? ` · ${onchain.withdrawAmountUsdc} USDC` : ''}`}
+            value={onchain.withdrawMint ? <ExplorerLink href={onchain.withdrawMint}>Arcscan</ExplorerLink> : <span className="text-warning">pending batch</span>}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="inline-flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wider text-muted-foreground/80">
+          <span className="size-1.5 rounded-full bg-muted-foreground/50" /> Off-chain · gasless · batched by Gateway
+        </span>
+        <div className="overflow-hidden rounded-lg border border-border">
+          <div className="max-h-52 overflow-y-auto">
+            <table className="w-full min-w-[420px] text-[13px]">
+              <thead className="sticky top-0 bg-surface-1">
+                <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                  <th className="px-3 py-2 text-left font-medium">Row</th>
+                  <th className="px-3 py-2 text-left font-medium">Amount</th>
+                  <th className="px-3 py-2 text-left font-medium">Gateway settlement id</th>
+                </tr>
+              </thead>
+              <tbody>
+                {offchain.rows.map((r) => (
+                  <tr key={r.index} className="border-b border-border last:border-0">
+                    <td className="tabular px-3 py-1.5 text-muted-foreground">{r.index}</td>
+                    <td className="tabular px-3 py-1.5 text-foreground">{r.amountUsdc} USDC</td>
+                    <td className="tabular px-3 py-1.5 text-muted-foreground">{r.settleId.slice(0, 8)}…</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p className="text-[12px] leading-relaxed text-muted-foreground">{offchain.note}</p>
+      </div>
     </Card>
   )
 }

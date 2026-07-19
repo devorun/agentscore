@@ -35,3 +35,15 @@ export type JobStatusValue = (typeof JobStatus)[keyof typeof JobStatus]
 
 export const PORT = Number(process.env.PORT || 8787)
 export const API_ONLY = process.env.API_ONLY === '1' || process.env.API_ONLY === 'true'
+
+// --- Circle Nanopayments (per-row USDC settlement via Circle Gateway) ---------
+// Default OFF: the ERC-8183 escrow loop is byte-for-byte unchanged unless this is
+// set. When on, the client meters micro-USDC per enriched row over Gateway
+// (gasless, off-chain, batched) alongside — never replacing — the escrow.
+export const NANOPAY_ENABLED = process.env.NANOPAY_ENABLED === '1' || process.env.NANOPAY_ENABLED === 'true'
+export const NANOPAY_PRICE_PER_ROW = process.env.NANOPAY_PRICE_PER_ROW || '0.001'
+export const NANOPAY_PORT = Number(process.env.NANOPAY_PORT || 8788)
+export const NANOPAY_CHAIN = 'arcTestnet' as const // Circle Gateway chain name
+export const ARC_CAIP = 'eip155:5042002' as const // Arc Testnet in CAIP-2
+export const GATEWAY_API_TESTNET = 'https://gateway-api-testnet.circle.com' as const
+export const DEMO_CLIENT_ADDRESS = process.env.DEMO_CLIENT_ADDRESS || ''

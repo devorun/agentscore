@@ -4,6 +4,7 @@ import { getAddress } from 'viem'
 import { Search, ShieldCheck } from 'lucide-react'
 import { loadShowcaseAgents } from '@/lib/agents'
 import { AgentCard } from '@/components/AgentCard'
+import { CircleStack } from '@/components/CircleStack'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -75,6 +76,8 @@ export function Home() {
           ))}
         </div>
       </section>
+
+      <CircleStack />
 
       <section className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">

@@ -21,6 +21,23 @@ It is infrastructure, not just a marketplace: reputation reads are open to anyon
 - **Escrow safety.** Exact-amount USDC approvals only, never unlimited; the escrow amount, recipient, and any platform/evaluator fee are shown before you sign.
 - **Data integrity.** Anything not backed by a real onchain read carries a "Demo" tag; nothing fabricated is presented as verified.
 
+## Circle developer tools
+
+Which Circle tools AgentScore uses, where they live in the code, and a live Arc Testnet proof for each — everything below is real and onchain, nothing simulated. This is mirrored as a **Circle stack** section on the site's home page.
+
+| Tool | Status | Where in code | Live proof (Arcscan) |
+|---|---|---|---|
+| **Contracts** | Live | `contracts/src/AgentScoreRegistry.sol`, `backend/src/worker.ts` | [Registry](https://testnet.arcscan.app/address/0x1489b56AaE4BB63e9793a151C12964B19bC99d38) · [ERC-8183 reference](https://testnet.arcscan.app/address/0x0747EEf0706327138c69792bF28Cd525089e4583) · [settled job](https://testnet.arcscan.app/tx/0x7818106dd2afbd751c64b41767d0474633fd0b7282510eb93781836de03bc4a4) · [rejected + refunded](https://testnet.arcscan.app/tx/0x87c9026db8451c3a73b471aa10dca17a6bf44f566cfe0f319da711b8d9f5a806) |
+| **Nanopayments** (x402 + Gateway) | Live | `backend/src/lib/nanopay.ts`, `web/src/pages/JobDetail.tsx` | [Gateway deposit](https://testnet.arcscan.app/tx/0xdb66f74f29cabe68ad0c51f7b7971411e8554763cc8795eae7e6f23b024de8e4) · [withdraw-mint](https://testnet.arcscan.app/tx/0x49390833e216c43b3568e51f5aa686498d66a1546d8b2a5108c2c6f14d47429b) |
+| **Gateway** | Live | `backend/src/lib/nanopay.ts` (`GatewayClient` deposit / withdraw) | [deposit](https://testnet.arcscan.app/tx/0xdb66f74f29cabe68ad0c51f7b7971411e8554763cc8795eae7e6f23b024de8e4) · [withdraw-mint](https://testnet.arcscan.app/tx/0x49390833e216c43b3568e51f5aa686498d66a1546d8b2a5108c2c6f14d47429b) |
+| **Wallets** (developer-controlled) | Live | `backend/src/lib/signer.ts`, `backend/src/circle-setup.ts`, `backend/src/demo-circle.ts` | [setBudget (Circle-signed)](https://testnet.arcscan.app/tx/0x09441c23a7035ba126a98aac1dfc6a2467a091c3eb47c5d62be3ef0691ff733e) · [submit (Circle-signed)](https://testnet.arcscan.app/tx/0xa4d5cbb5da0107531ca434c3de273fd3658866ba8897a7aebb89de3e5e6c6deb) · [arbiter settled](https://testnet.arcscan.app/tx/0xd6bba064caee91bc50015afa7f59e6d4a4669ce0d9a55c7f452b7bf25be939b6) |
+| **Paymaster** | Not used (by design) | — | — |
+
+- **Contracts.** Circle's deployed **ERC-8183 AgenticCommerce** reference holds escrow (the settlement of record); our own data-only **AgentScoreRegistry** stores agent profiles and arbiter verdict attestations. Our contracts hold no funds.
+- **Nanopayments & Gateway.** The enrichment agent is paid **per row** in micro-USDC over the **x402** protocol (gasless EIP-3009 authorizations), settled by **Circle Gateway** — running *alongside*, never replacing, the escrow. Honest by design: each per-row payment is **off-chain and batch-settled** (its id is a Gateway ledger entry, not a tx hash); the **onchain footprint** is the one-time Gateway **deposit** and the agent's **withdraw-mint**, and the job page separates the two explicitly. Permissionless on Arc Testnet — no Circle API key. Reproduce with `cd backend && NANOPAY_ENABLED=1 npm run demo:nanopay`.
+- **Wallets (developer-controlled).** A Circle Wallet signs as a *separate* "Circle-signed" agent with its own address (`0xc514…`, env-selected via `SIGNER_MODE=circle`): it signed **`setBudget` + `submit`** for job **#158772**, which the raw-key arbiter verified and settled — the proven raw-key agent (`0x939A…`) and all existing proofs stay untouched. Provision with `cd backend && npm run circle:setup`, then run the demo with `SIGNER_MODE=circle npm run demo:circle` (free, no card).
+- **Paymaster — deliberately skipped.** Circle Paymaster lets users pay gas in USDC instead of a native token. **On Arc, USDC already *is* the native gas token**, so there is nothing to abstract, and Arc is not on Circle Paymaster's supported-chain list. We document the choice rather than bolt on a redundant integration.
+
 ## Run
 
 ```
@@ -47,7 +64,7 @@ cd web && npm install && npm run dev
 - **ERC-8004 interoperability.** Arc hosts official ERC-8004 identity, reputation, and validation registries. AgentScore's registry is designed to interoperate with them: resolve an agent's ERC-8004 onchain identity, cross-reference validator feedback recorded via ERC-8004's `ReputationRegistry`, and publish our settlement-derived scores as a complementary, escrow-backed signal — so an agent carries one portable reputation across both systems.
 - Contract hooks for programmable settlement conditions.
 - Agent-to-agent subcontracting graphs.
-- Unified Balance / gateway payments.
+- **CCTP cross-chain hire** — fund an Arc job with USDC held on another testnet, via Arc App Kit's Bridge (CCTP under the hood). Gateway-settled nanopayments already ship (see [Circle developer tools](#circle-developer-tools)).
 
 ## Security & limitations
 

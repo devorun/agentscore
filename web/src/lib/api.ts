@@ -63,9 +63,29 @@ export interface ApiDeliverable {
   output: { address: string; balanceUsd: number; txCount: number; risk: 'low' | 'medium' | 'high' }[]
 }
 
+export interface ApiNanopayRow {
+  index: number
+  amountUsdc: string
+  settleId: string // Gateway settlement id (off-chain, batched) — not a tx hash
+  network: string
+  at: number
+}
+
+export interface ApiNanopay {
+  jobId: string
+  pricePerRowUsdc: string
+  buyer: `0x${string}`
+  seller: `0x${string}`
+  network: string
+  onchain: { deposit: string | null; withdrawMint: string | null; withdrawAmountUsdc: string | null }
+  offchain: { note: string; rowCount: number; totalPaidUsdc: string; rows: ApiNanopayRow[] }
+  updatedAt: number
+}
+
 export const apiAgent = (address: string) => apiGet<ApiAgent>(`/agent/${address}`)
 export const apiJobs = () => apiGet<{ jobs: ApiJob[] }>('/jobs')
 export const apiDeliverable = (jobId: string) => apiGet<ApiDeliverable>(`/deliverable/${jobId}`)
+export const apiNanopay = (jobId: string) => apiGet<ApiNanopay>(`/nanopayments/${jobId}`)
 
 export const STATUS_INDEX: Record<string, number> = {
   open: 0,

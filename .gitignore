@@ -6,6 +6,16 @@
 # Node
 node_modules/
 
+# Phase A spike (throwaway; references testnet keys via env — never commit)
+/spike/
+
+# Circle developer-controlled wallet recovery material (sensitive — never commit)
+backend/.circle/
+backend/recovery_file_*.dat
+
+# Internal notes — kept locally, never part of the repo
+AGENTSCORE_BRIEF.md
+
 # Frontend build
 dist/
 
@@ -17,6 +27,8 @@ web/screenshots/
 
 # Backend runtime-generated deliverable artifacts (input dataset is committed)
 backend/data/deliverables/
+# Backend runtime-generated nanopayments ledgers
+backend/data/nanopay/
 
 # Foundry artifacts
 out/
