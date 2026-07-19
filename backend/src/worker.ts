@@ -4,7 +4,8 @@ import { publicClient } from './lib/chain.js'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
 import { arcTestnet, ARC_RPC, ERC8183_ADDRESS, EXPLORER_URL, JobStatus, REGISTRY_ADDRESS } from './lib/config.js'
 import { enrich, enrichTampered, hashOutput, loadInputDataset, verify } from './lib/enrichment.js'
-import { getDeliverable, saveDeliverable, setVerdict } from './lib/store.js'
+import { agentWriteMemo, arbiterJudge, isJudgedJob, isLazyRun, judgedSpec, llmKeyPresent, reasonHashOf } from './lib/judged.js'
+import { getDeliverable, saveDeliverable, setVerdict, type DeliverableRecord } from './lib/store.js'
 
 const PRICE_6 = parseUnits(process.env.AGENT_PRICE_USDC || '10', 6)
 const POLL_MS = 6000
@@ -87,6 +88,51 @@ export async function startWorker(): Promise<void> {
     await publicClient.waitForTransactionReceipt({ hash })
   }
 
+  /**
+   * Judged-quality verdict: one deterministic integrity check (the stored memo
+   * must hash to the onchain submission), then an independent LLM evaluation on
+   * a different model family — never re-deriving the work. Any LLM failure
+   * throws → caught by step()'s catch → retried next cycle. A verdict is never
+   * fabricated.
+   */
+  async function settleJudged(jobId: bigint, job: JobView, rec: DeliverableRecord, nowSec: number) {
+    if (!llmKeyPresent()) {
+      log(`job #${jobId} awaits a judged verdict but LLM_API_KEY is missing — skipping (no fabricated verdict)`)
+      return
+    }
+    const onchain = await onchainDeliverable(jobId)
+    const memo = rec.memo
+    const hashMatch = Boolean(memo) && Boolean(onchain) && keccak256(toHex(memo as string)).toLowerCase() === (onchain as string).toLowerCase()
+    if (!memo || !hashMatch) {
+      // Integrity failure is a deterministic fact, not a judgment call.
+      const reasoning = 'Deliverable integrity check failed: the stored memo does not hash to the onchain submission.'
+      const reason = reasonHashOf(reasoning)
+      const settleTx = await arbiter.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'reject', args: [jobId, reason, '0x'] })
+      log(`arbiter REJECTED #${jobId} (judged: integrity failure) → ${tx(settleTx)}`)
+      await publicClient.waitForTransactionReceipt({ hash: settleTx })
+      await send(`arbiter attest REJECTED #${jobId}`, arbiter, { address: REGISTRY_ADDRESS, abi: registryAbi, functionName: 'attest', args: [jobId, getAddress(job.provider), 1, reason] })
+      setVerdict(jobId.toString(), { outcome: 'rejected', reasoning, reasonHash: reason, arbiterModel: 'integrity-check', deliverableHashMatch: false, verifiedAt: nowSec, settleTx })
+      return
+    }
+    const v = await arbiterJudge(rec.spec, memo) // throws loudly on provider failure
+    const scores = v.rubric.map((r) => `${r.score}/${r.max}`).join(' ')
+    if (v.pass) {
+      const settleTx = await arbiter.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'complete', args: [jobId, v.reasonHash, '0x'] })
+      log(`arbiter JUDGED PASS #${jobId} (${v.arbiterModel}: ${scores}) — complete → ${tx(settleTx)}`)
+      await publicClient.waitForTransactionReceipt({ hash: settleTx })
+      await send(`arbiter attest APPROVED #${jobId}`, arbiter, { address: REGISTRY_ADDRESS, abi: registryAbi, functionName: 'attest', args: [jobId, getAddress(job.provider), 0, v.reasonHash] })
+      setVerdict(jobId.toString(), { outcome: 'approved', rubric: v.rubric, reasoning: v.reasoning, reasonHash: v.reasonHash, arbiterModel: v.arbiterModel, deliverableHashMatch: true, verifiedAt: nowSec, settleTx })
+      log(`✅ job #${jobId} settled — judged pass, written reasoning hash-committed onchain.`)
+    } else {
+      const settleTx = await arbiter.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'reject', args: [jobId, v.reasonHash, '0x'] })
+      log(`arbiter JUDGED FAIL #${jobId} (${v.arbiterModel}: ${scores}) — reject → ${tx(settleTx)}`)
+      await publicClient.waitForTransactionReceipt({ hash: settleTx })
+      await send(`arbiter attest REJECTED #${jobId}`, arbiter, { address: REGISTRY_ADDRESS, abi: registryAbi, functionName: 'attest', args: [jobId, getAddress(job.provider), 1, v.reasonHash] })
+      setVerdict(jobId.toString(), { outcome: 'rejected', rubric: v.rubric, reasoning: v.reasoning, reasonHash: v.reasonHash, arbiterModel: v.arbiterModel, deliverableHashMatch: true, verifiedAt: nowSec, settleTx })
+      log(`❌ job #${jobId} rejected — judged fail, escrow refunded, reasoning hash-committed onchain.`)
+    }
+  }
+
   async function step(jobId: bigint) {
     if (acting.has(jobId)) return
     const job = (await publicClient.readContract({
@@ -106,6 +152,39 @@ export async function startWorker(): Promise<void> {
           args: [jobId, PRICE_6, '0x'],
         })
       } else if (agentShouldSubmit(job)) {
+        if (isJudgedJob(job.description)) {
+          // Judged-quality job: the agent produces genuine LLM work. Without the
+          // free-tier key we loudly skip — nothing is ever fabricated.
+          if (!llmKeyPresent()) {
+            log(`job #${jobId} is [JUDGED] but LLM_API_KEY is missing — skipping (no fabricated work)`)
+            return
+          }
+          const spec = judgedSpec(job.description)
+          const lazy = isLazyRun(job.description)
+          const { memo, model } = await agentWriteMemo(spec, lazy)
+          const outputHash = keccak256(toHex(memo))
+          saveDeliverable({
+            jobId: jobId.toString(),
+            kind: 'judged',
+            producedBy: AGENT,
+            spec,
+            inputRows: loadInputDataset().length,
+            output: [],
+            memo,
+            agentModel: model,
+            outputHash,
+            createdAt: Math.floor(Date.now() / 1000),
+          })
+          const hash = await agent.writeContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'submit', args: [jobId, outputHash, '0x'] })
+          log(`agent submit #${jobId} (judged memo by ${model}, ${memo.length} chars${lazy ? ', LAZY run' : ''}) → ${tx(hash)}`)
+          await publicClient.waitForTransactionReceipt({ hash })
+          const rec = getDeliverable(jobId.toString())
+          if (rec) {
+            rec.submittedTx = hash
+            saveDeliverable(rec)
+          }
+          return
+        }
         // Agent does REAL work: dedupe + risk-label the dataset, hash the actual
         // output, store it, and submit that hash. ([BAD] triggers a faulty run
         // for the reject demo.)
@@ -145,6 +224,10 @@ export async function startWorker(): Promise<void> {
         const rec = getDeliverable(jobId.toString())
         if (!rec) {
           log(`job #${jobId} submitted but no local deliverable to verify — skipping`)
+          return
+        }
+        if (rec.kind === 'judged') {
+          await settleJudged(jobId, job, rec, nowSec)
           return
         }
         const onchain = await onchainDeliverable(jobId)

@@ -45,19 +45,36 @@ export interface ApiJob {
   tx: string
 }
 
+export interface ApiRubricItem {
+  criterion: string
+  score: number
+  max: number
+  comment: string
+}
+
 export interface ApiDeliverable {
   jobId: string
+  kind: 'deterministic' | 'judged'
   producedBy: `0x${string}`
   spec: string
   inputRows: number
   outputRows: number
   outputHash: string
+  memo: string | null
+  agentModel: string | null
   submittedTx: string | null
   verdict: {
     outcome: 'approved' | 'rejected'
-    checks: { schema: boolean; rowCount: boolean; noDuplicates: boolean; checksumMatch: boolean; exactMatch: boolean }
-    expectedRowCount: number
-    gotRowCount: number
+    // Deterministic (re-derived) verdicts:
+    checks?: { schema: boolean; rowCount: boolean; noDuplicates: boolean; checksumMatch: boolean; exactMatch: boolean }
+    expectedRowCount?: number
+    gotRowCount?: number
+    // Judged-quality verdicts (independent LLM evaluation):
+    rubric?: ApiRubricItem[]
+    reasoning?: string
+    reasonHash?: string
+    arbiterModel?: string
+    deliverableHashMatch?: boolean
     settleTx: string | null
   } | null
   output: { address: string; balanceUsd: number; txCount: number; risk: 'low' | 'medium' | 'high' }[]

@@ -76,6 +76,33 @@ export function Arbiter() {
       </div>
 
       <div className="flex flex-col gap-3">
+        <h2 className="text-[18px] font-semibold text-foreground">Two verification models</h2>
+        <p className="max-w-[64ch] text-[14px] text-muted-foreground">
+          Different work needs different proof. The arbiter applies whichever model fits the job, and every job page
+          states which one settled it.
+        </p>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <Card className="flex flex-col gap-2 rounded-xl border-border bg-card p-5">
+            <h3 className="text-[15px] font-semibold text-foreground">Re-derived — verifiable computation</h3>
+            <p className="text-[13px] leading-relaxed text-muted-foreground">
+              For work with a single correct answer (data transforms, reconciliation, checksums), the arbiter
+              independently recomputes the result and compares it byte for byte. Objective, trustless, no judgment
+              involved.
+            </p>
+          </Card>
+          <Card className="flex flex-col gap-2 rounded-xl border-border bg-card p-5">
+            <h3 className="text-[15px] font-semibold text-foreground">Judged — evaluated quality</h3>
+            <p className="text-[13px] leading-relaxed text-muted-foreground">
+              For open-ended work (analysis, audits, reports), re-deriving would mean redoing the job. Instead an
+              independent arbiter model — a different model family from the agent, so no self-grading — scores the
+              deliverable against the spec on a rubric and writes its reasoning. The keccak hash of that written
+              reasoning is the onchain verdict reason, so the displayed reasoning is verifiably the attested one.
+            </p>
+          </Card>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
           <h2 className="text-[18px] font-semibold text-foreground">Recent verdicts</h2>
           <Badge variant="outline" className="border-border bg-surface-2 text-[11px] text-muted-foreground">

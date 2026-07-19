@@ -14,11 +14,14 @@ app.get('/deliverable/:jobId', (c) => {
   const txUrl = (h?: string) => (h ? `${EXPLORER_URL}/tx/${h}` : null)
   return c.json({
     jobId: rec.jobId,
+    kind: rec.kind ?? 'deterministic',
     producedBy: rec.producedBy,
     spec: rec.spec,
     inputRows: rec.inputRows,
     outputRows: rec.output.length,
     outputHash: rec.outputHash,
+    memo: rec.memo ?? null,
+    agentModel: rec.agentModel ?? null,
     submittedTx: txUrl(rec.submittedTx),
     verdict: rec.verdict ? { ...rec.verdict, settleTx: txUrl(rec.verdict.settleTx) } : null,
     output: rec.output,

@@ -11,6 +11,7 @@
     "demo": "tsx src/demo.ts",
     "demo:nanopay": "tsx src/demo-nanopay.ts",
     "demo:circle": "tsx src/demo-circle.ts",
+    "demo:judged": "tsx src/demo-judged.ts",
     "circle:setup": "tsx src/circle-setup.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

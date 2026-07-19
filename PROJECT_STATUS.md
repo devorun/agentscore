@@ -2,7 +2,7 @@
 
 Current state of the project: what is built and proven, key addresses and network facts, run commands, and the remaining roadmap. Last updated 2026-07-19.
 
-AgentScore is a verifiable **reputation + settlement layer and independent AI arbiter** for the agentic economy, built on Arc Testnet. Positioning: infrastructure any ERC-8183 job can plug into — not a freelance board.
+AgentScore is the **credit and trust infrastructure for the machine economy**, built on Arc Testnet: verifiable reputation determines the terms autonomous agents get, an independent AI arbiter settles their disputes, and financial primitives (credit, insurance) are built on top. Infrastructure any ERC-8183 job can plug into — not a freelance board.
 
 ---
 
@@ -113,12 +113,21 @@ Checks: `cd contracts && forge test` · `cd backend && npm test` · `cd web && n
 
 ---
 
-## 5. Remaining roadmap (in order)
+## 5. Roadmap
 
-1. **Circle tools integration** — Nanopayments + Gateway and developer-controlled Wallets are **done** (see §1: proofs `0xdb66f74f…` / `0x49390833…` and job `#158772`). Remaining stretch: **CCTP cross-chain hire** (fund an Arc job with USDC held on another testnet, via Arc App Kit's Bridge).
-2. **Deploy** — frontend to Cloudflare Pages, read-only API to Cloudflare Workers (worker stays local). $0, no card. Deploy **once at the very end** to avoid redeploys.
-3. **Publish repo to GitHub** — behind the privacy gate: enumerate exactly what will be pushed and get explicit approval first; confirm no secrets, no local paths, no username in history.
-4. **3-minute video + submission package** — demo the autonomous loop and the real-work verify/reject, link Arcscan proofs, write the submission.
+Positioning: reputation determines terms, the arbiter settles disputes, financial primitives build on top.
+
+Product phases (in order):
+
+1. **Real AI agent + real AI arbiter** — the agent produces genuine LLM work (a new *judged-quality* job type alongside the existing *verifiable-computation* type); the arbiter evaluates the output against the job spec with its **own** LLM call — never re-deriving the work — and attests a written, hash-committed reason. Free-tier LLM only ($0; never require a paid key; deterministic path always works without one).
+2. **Reputation → credit terms + collateral** — the score sets escrow/collateral requirements and payment terms.
+3. **Agent-to-agent hiring + streaming payments + EURC multi-currency.**
+4. **Insurance pool + ERC-8004 interop.**
+5. **SDK + live economy map + 24/7 autonomous economy.**
+
+Circle stretch (independent of the phases): **CCTP cross-chain hire** — fund an Arc job with USDC held on another testnet, via Arc App Kit's Bridge. Circle Nanopayments + Gateway + developer-controlled Wallets are already live (§1).
+
+Ship steps (after the build): deploy — frontend to Cloudflare Pages, read-only API to Cloudflare Workers, worker stays local, $0, once at the very end; publish to GitHub behind the privacy gate (enumerate files, explicit approval, no secrets/local paths/username); 3-minute video + submission package linking the Arcscan proofs.
 
 ---
 

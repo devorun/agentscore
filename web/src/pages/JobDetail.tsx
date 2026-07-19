@@ -14,7 +14,7 @@ import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { parseUnits, type Address } from 'viem'
+import { keccak256, parseUnits, toHex, type Address } from 'viem'
 import { USDC_DECIMALS } from '@/lib/config'
 import { cn } from '@/lib/utils'
 
@@ -277,7 +277,14 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
           </p>
         </div>
       </div>
-      {deliverable.data ? <DeliverablePanel data={deliverable.data} /> : null}
+      {deliverable.data ? <VerificationModelBanner kind={deliverable.data.kind} /> : null}
+      {deliverable.data ? (
+        deliverable.data.kind === 'judged' ? (
+          <JudgedDeliverablePanel data={deliverable.data} events={events.data ?? []} />
+        ) : (
+          <DeliverablePanel data={deliverable.data} />
+        )
+      ) : null}
       {nanopay.data ? <NanopaymentsPanel data={nanopay.data} /> : null}
     </div>
   )
@@ -291,7 +298,7 @@ const RISK_TONE: Record<string, string> = {
 
 function DeliverablePanel({ data }: { data: ApiDeliverable }) {
   const rejected = data.verdict?.outcome === 'rejected'
-  const checkList: { key: keyof NonNullable<ApiDeliverable['verdict']>['checks']; label: string }[] = [
+  const checkList: { key: keyof NonNullable<NonNullable<ApiDeliverable['verdict']>['checks']>; label: string }[] = [
     { key: 'schema', label: 'schema' },
     { key: 'rowCount', label: 'row count' },
     { key: 'noDuplicates', label: 'no duplicates' },
@@ -323,12 +330,12 @@ function DeliverablePanel({ data }: { data: ApiDeliverable }) {
         {data.verdict?.settleTx ? <Row label={rejected ? 'Rejected' : 'Settled'} value={<ExplorerLink href={data.verdict.settleTx}>tx</ExplorerLink>} /> : null}
       </div>
 
-      {data.verdict ? (
+      {data.verdict?.checks ? (
         <div className="flex flex-col gap-2">
           <span className="text-[12px] uppercase tracking-wider text-muted-foreground/70">Arbiter verification</span>
           <div className="flex flex-wrap gap-1.5">
             {checkList.map(({ key, label }) => {
-              const pass = data.verdict!.checks[key]
+              const pass = data.verdict!.checks![key]
               return (
                 <span
                   key={key}
@@ -447,6 +454,195 @@ function NanopaymentsPanel({ data }: { data: ApiNanopay }) {
         </div>
         <p className="text-[12px] leading-relaxed text-muted-foreground">{offchain.note}</p>
       </div>
+    </Card>
+  )
+}
+
+// Which verification model settled this job — the contrast is the point: some
+// work can be re-derived, some can only be judged.
+function VerificationModelBanner({ kind }: { kind: 'deterministic' | 'judged' }) {
+  const rederived = kind !== 'judged'
+  return (
+    <Card className="flex flex-col gap-1 rounded-xl border-border bg-card p-4">
+      <span className="text-[13px] font-semibold text-foreground">
+        Verification model: {rederived ? 're-derived' : 'judged'}
+      </span>
+      <p className="text-[13px] leading-relaxed text-muted-foreground">
+        {rederived
+          ? 'This work has a single correct answer, so the arbiter independently recomputed the result and compared it byte for byte before settling.'
+          : 'This work has no single correct answer, so an independent arbiter model evaluated it against the job spec with a scored rubric and a written reason. The arbiter judges the deliverable — it never re-derives the work.'}
+      </p>
+    </Card>
+  )
+}
+
+// Minimal markdown-lite renderer for the agent's memo: headings, bullets and
+// paragraphs, no external dependencies, no raw HTML.
+function renderMemo(memo: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  let bullets: string[] = []
+  const flush = (key: string) => {
+    if (bullets.length > 0) {
+      nodes.push(
+        <ul key={key} className="ml-5 list-disc space-y-1">
+          {bullets.map((b, i) => (
+            <li key={i}>{b}</li>
+          ))}
+        </ul>,
+      )
+      bullets = []
+    }
+  }
+  memo.split('\n').forEach((raw, i) => {
+    const line = raw.replace(/\*\*/g, '').trimEnd()
+    if (/^#{1,4}\s+/.test(line)) {
+      flush(`ul-${i}`)
+      nodes.push(
+        <h4 key={i} className="pt-2 text-[14px] font-semibold text-foreground first:pt-0">
+          {line.replace(/^#{1,4}\s+/, '')}
+        </h4>,
+      )
+    } else if (/^\s*[-*]\s+/.test(line)) {
+      bullets.push(line.replace(/^\s*[-*]\s+/, ''))
+    } else if (line.trim() === '') {
+      flush(`ul-${i}`)
+    } else {
+      flush(`ul-${i}`)
+      nodes.push(
+        <p key={i} className="leading-relaxed">
+          {line}
+        </p>,
+      )
+    }
+  })
+  flush('ul-end')
+  return nodes
+}
+
+function JudgedDeliverablePanel({ data, events }: { data: ApiDeliverable; events: JobEvent[] }) {
+  const rejected = data.verdict?.outcome === 'rejected'
+  const reasoning = data.verdict?.reasoning
+
+  // The credibility check: recompute keccak(reasoning) locally and compare it to
+  // the reason committed onchain in the settle event — not to anything the API says.
+  const settleEvent = events.find((e) => e.name === 'JobCompleted' || e.name === 'JobRejected')
+  const onchainReason = settleEvent ? String(settleEvent.args?.reason ?? '') : null
+  const computedHash = reasoning ? keccak256(toHex(reasoning)) : null
+  const hashState: 'match' | 'mismatch' | 'pending' =
+    computedHash && onchainReason ? (computedHash.toLowerCase() === onchainReason.toLowerCase() ? 'match' : 'mismatch') : 'pending'
+
+  return (
+    <Card className="flex flex-col gap-4 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Deliverable — analyst memo</h2>
+        {data.verdict ? (
+          <Badge
+            variant="outline"
+            className={cn(
+              'rounded-md text-[11px] font-medium tracking-wide',
+              rejected ? 'border-danger/30 bg-danger/10 text-danger' : 'border-success/30 bg-success/10 text-success',
+            )}
+          >
+            {rejected ? 'REJECTED BY ARBITER' : 'PASSED BY ARBITER'}
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="rounded-md border-warning/30 bg-warning/10 text-[11px] font-medium tracking-wide text-warning">
+            AWAITING VERDICT
+          </Badge>
+        )}
+      </div>
+
+      <p className="max-w-[75ch] text-[13px] leading-relaxed text-muted-foreground">
+        <span className="text-foreground">Job spec:</span> {data.spec}
+      </p>
+
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-3">
+        <Row label="Produced by" value={<ExplorerLink href={addressUrl(data.producedBy)}>{shortAddress(data.producedBy)}</ExplorerLink>} />
+        {data.agentModel ? <Row label="Agent model" value={<span className="text-cream">{data.agentModel}</span>} /> : null}
+        <Row label="Memo hash" value={<span className="tabular text-muted-foreground">{data.outputHash.slice(0, 10)}…</span>} />
+        {data.submittedTx ? <Row label="Submitted" value={<ExplorerLink href={data.submittedTx}>tx</ExplorerLink>} /> : null}
+        {data.verdict?.settleTx ? <Row label={rejected ? 'Rejected' : 'Settled'} value={<ExplorerLink href={data.verdict.settleTx}>tx</ExplorerLink>} /> : null}
+        {data.verdict?.deliverableHashMatch !== undefined ? (
+          <Row
+            label="Integrity"
+            value={
+              data.verdict.deliverableHashMatch ? (
+                <span className="text-success">memo hashes to onchain submission ✓</span>
+              ) : (
+                <span className="text-danger">hash mismatch ✗</span>
+              )
+            }
+          />
+        ) : null}
+      </div>
+
+      {data.memo ? (
+        <div className="max-h-80 overflow-y-auto rounded-lg border border-border bg-surface-1 p-4 text-[13px] text-muted-foreground">
+          <div className="flex flex-col gap-2">{renderMemo(data.memo)}</div>
+        </div>
+      ) : null}
+
+      {data.verdict?.rubric ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[12px] uppercase tracking-wider text-muted-foreground/70">Arbiter’s evaluation</span>
+            {data.verdict.arbiterModel ? (
+              <Badge variant="outline" className="rounded-md border-neon/30 bg-neon/10 text-[11px] font-normal text-neon">
+                {data.verdict.arbiterModel} — independent model family
+              </Badge>
+            ) : null}
+          </div>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[440px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                    <th className="px-3 py-2 text-left font-medium">Criterion</th>
+                    <th className="px-3 py-2 text-left font-medium">Score</th>
+                    <th className="px-3 py-2 text-left font-medium">Comment</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.verdict.rubric.map((r) => (
+                    <tr key={r.criterion} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2 text-foreground">{r.criterion}</td>
+                      <td className={cn('tabular px-3 py-2 font-semibold', r.score >= Math.ceil(r.max * 0.6) ? 'text-success' : 'text-danger')}>
+                        {r.score}/{r.max}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{r.comment}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {reasoning ? (
+        <div className="flex flex-col gap-2">
+          <span className="text-[12px] uppercase tracking-wider text-muted-foreground/70">Written reasoning (attested onchain)</span>
+          <p className="max-w-[75ch] rounded-lg border-l-2 border-neon/50 bg-surface-1 px-4 py-3 text-[13px] leading-relaxed text-foreground">
+            {reasoning}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+            {hashState === 'match' ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-0.5 text-success">
+                ✓ keccak of this reasoning matches the onchain verdict
+              </span>
+            ) : hashState === 'mismatch' ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-danger/30 bg-danger/10 px-2 py-0.5 text-danger">
+                ✗ reasoning does not hash to the onchain verdict
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-muted-foreground">
+                verifying against onchain events…
+              </span>
+            )}
+            {settleEvent ? <ExplorerLink href={txUrl(settleEvent.txHash)}>verdict tx</ExplorerLink> : null}
+          </div>
+        </div>
+      ) : null}
     </Card>
   )
 }
