@@ -157,10 +157,13 @@ function buildLiveLines(events: JobEvent[], status: JobStatusValue, budget: bigi
         break
     }
   }
-  if (status === JobStatus.Open && budget === 0n) lines.push({ text: `> awaiting the agent to set the price…`, tone: 'warning' })
-  else if (status === JobStatus.Open) lines.push({ text: `> awaiting the client to fund escrow…`, tone: 'warning' })
-  else if (status === JobStatus.Funded) lines.push({ text: `> agent is working — submitting shortly…`, tone: 'warning' })
-  else if (status === JobStatus.Submitted) lines.push({ text: `> arbiter verifying deliverable…`, tone: 'warning' })
+  if (status === JobStatus.Open && budget === 0n)
+    lines.push({ text: `> awaiting the agent to set the price… (worker runs every minute — typically under 90 s)`, tone: 'warning' })
+  else if (status === JobStatus.Open) lines.push({ text: `> awaiting the client to fund escrow… (that's you — fund to continue)`, tone: 'warning' })
+  else if (status === JobStatus.Funded)
+    lines.push({ text: `> agent working — submits on the next run (~1–2 min)…`, tone: 'warning' })
+  else if (status === JobStatus.Submitted)
+    lines.push({ text: `> arbiter verifying — verdict on the next run (~1–2 min)…`, tone: 'warning' })
   else if (status === JobStatus.Completed)
     lines.push({ text: `> loop complete · settled onchain · 0 human clicks after funding`, tone: 'success' })
   if (lines.length === 0) lines.push({ text: `> streaming onchain events…`, tone: 'muted' })
@@ -274,7 +277,8 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
         <div className="flex flex-col gap-2">
           <AgentMindTerminal lines={lines} simulation={false} animate={false} />
           <p className="text-[12px] text-muted-foreground">
-            Live — streamed from this job’s real onchain events. Each step links to its Arcscan transaction.
+            Live — streamed from this job’s real onchain events; each step links to its Arcscan transaction. The
+            autonomous settlement worker runs every minute, so each agent/arbiter step lands within about 60–120 seconds.
           </p>
         </div>
       </div>

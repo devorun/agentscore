@@ -48,6 +48,15 @@ Pages: **Home** (agent showcase + secondary address lookup), **`/agent/:address`
 - **Paymaster** — deliberately **skipped**: USDC is already Arc's native gas token, so it is redundant (and Arc isn't on Circle Paymaster's chain list). Documented as a considered choice.
 - Fresh escrow reproductions proving the loop is intact after these additions: **`#158721`** (settle) and **`#158723`** (reject + refund).
 
+### Live deployment ($0, no card — always-on)
+- **Frontend:** https://agentscore-app.pages.dev (Cloudflare Pages, static `dist/`; bundle verified to contain no secrets).
+- **Read-only API:** https://agentscore-api.devorun.workers.dev (Cloudflare Worker, `src/cf.ts`; public vars only, no keys).
+- **Settlement worker:** `agentscore-worker` — Cloudflare **Cron Trigger every minute** (`src/cron.ts`, `wrangler.worker.toml`). It performs the agent + arbiter steps so **a visitor's hire settles with no local machine running**. Its `fetch` URL (https://agentscore-worker.devorun.workers.dev) is a read-only "what it sees / would do" status view.
+- **Proven:** job **`#158980`** was hired and settled entirely by the cloud worker with the local signer off — priced at 0:58, deliverable submitted at 1:56, completed + attested on a later tick. A fresh hire settles in **~4 minutes** (one action-pair per minute tick).
+- **Free-tier design.** Measured headroom: the enforced CPU budget is ~10k–25k chained keccaks, and a two-transaction invocation still passes with 6k extra hashes — the real workload uses roughly **half** the budget. Enforcement is **adaptive** (one overrun degrades later invocations), so the worker runs cool: receipt-free sends with local nonces, one multicall for reads, topic-filtered `eth_getLogs` capped at **9,000 blocks** (Arc RPCs reject larger ranges), and a hard cap of **2 transactions per tick**. Stateless — every tick re-derives from chain, so it is idempotent and needs no KV.
+- **Keys:** `AGENT_LEXICA_PRIVATE_KEY` + `ARBITER_PRIVATE_KEY` are Cloudflare **Workers secrets** (`wrangler secret put`), testnet-only, never in the repo. This is a deliberate posture change from "keys never leave the local machine", bounded because these are valueless faucet wallets and our contracts hold no funds.
+- **Cloud vs local scope (stated plainly):** the cloud worker settles **deterministic** jobs only. `[JUDGED]` jobs are skipped (and logged) because they need an LLM call plus a shared deliverable store; they remain a local-worker path, with completed proofs **`#158793`** / **`#158794`**. The cloud API also does not serve `/deliverable/:jobId` or `/nanopayments/:jobId` — both are disk-backed and Node-only — so those panels render only against a local API.
+
 Everything above is committed; working tree clean.
 
 ---
@@ -105,6 +114,8 @@ cd backend && npm run demo:credit -- all               # credit terms: collatera
 
 Do **not** also run `arbiter/run.mjs` — that standalone watcher is **superseded by the backend worker** and would double-act on the same jobs.
 
+**Operational rule (binding while the cloud cron is scheduled):** the local backend runs **`npm run api`** (read-only), **never `npm start`** — the cloud `agentscore-worker` is the signer, and a second local signer would double-act on the same jobs. To demo the local worker (e.g. judged jobs), first pause the cloud cron (`crons = []` in `wrangler.worker.toml` + `npx wrangler deploy --config wrangler.worker.toml`), then `npm start`.
+
 Checks: `cd contracts && forge test` · `cd backend && npm test` · `cd web && npm run typecheck && npm run lint && npm run build` · Playwright specs in `web/tests`.
 
 ---
@@ -137,7 +148,7 @@ Product phases (in order):
 
 Circle stretch (independent of the phases): **CCTP cross-chain hire** — fund an Arc job with USDC held on another testnet, via Arc App Kit's Bridge. Circle Nanopayments + Gateway + developer-controlled Wallets are already live (§1).
 
-Ship steps (after the build): deploy — frontend to Cloudflare Pages, read-only API to Cloudflare Workers, worker stays local, $0, once at the very end; publish to GitHub behind the privacy gate (enumerate files, explicit approval, no secrets/local paths/username); 3-minute video + submission package linking the Arcscan proofs.
+Ship steps: ✅ deployed — frontend on Cloudflare Pages (`agentscore-app.pages.dev`), read-only API + always-on settlement cron on Cloudflare Workers, $0/no card, registry source **verified on Arcscan**. Remaining: publish to GitHub behind the privacy gate (enumerate files, explicit approval, no secrets/local paths/username); 3-minute video + submission package linking the Arcscan proofs.
 
 ---
 
@@ -147,7 +158,7 @@ Ship steps (after the build): deploy — frontend to Cloudflare Pages, read-only
 PROJECT_STATUS.md     project status (this file)
 README.md             overview + roadmap (ERC-8004 interop noted)
 contracts/            Foundry — AgentScoreRegistry + tests
-backend/              Node+TS — reputation API + arbiter worker; judged-quality (lib/judged.ts) + credit terms (lib/credit.ts); Circle nanopayments (lib/nanopay.ts), signer adapter (lib/signer.ts); demo-{judged,credit,nanopay,circle}.ts, circle-setup.ts (+ Dockerfile, wrangler.toml)
+backend/              Node+TS — reputation API + arbiter worker; judged-quality (lib/judged.ts) + credit terms (lib/credit.ts); Circle nanopayments (lib/nanopay.ts), signer adapter (lib/signer.ts); demo-{judged,credit,nanopay,circle}.ts, circle-setup.ts; cloud: cf.ts (API worker, wrangler.toml), cron.ts (settlement cron, wrangler.worker.toml), probe.ts (parked CPU probe, wrangler.probe.toml) (+ Dockerfile)
 web/                  Vite React frontend (Tailwind + shadcn/ui)
 arbiter/              legacy standalone watcher (superseded by backend worker); holds gitignored .env
 ```

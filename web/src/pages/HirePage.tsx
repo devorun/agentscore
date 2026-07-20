@@ -488,7 +488,7 @@ function ActionZone(props: {
     return (
       <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-1 p-4 text-[14px] text-muted-foreground">
         <Loader2 className="size-4 animate-spin text-neon" />
-        Waiting for the agent to confirm the price onchain…
+        Waiting for the agent to price the job onchain — the autonomous worker runs every minute, typically under 90 seconds.
       </div>
     )
   }

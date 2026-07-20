@@ -24,4 +24,5 @@ export const registryAbi = parseAbi([
   'function attest(uint256 jobId, address agent, uint8 outcome, bytes32 reasonHash)',
   'function getVerdicts(address agent) view returns ((uint256 jobId, bytes32 reasonHash, address arbiter, uint64 attestedAt, uint8 outcome)[])',
   'function verdictCount(address agent) view returns (uint256)',
+  'function jobAttested(uint256 jobId) view returns (bool)',
 ])

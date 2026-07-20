@@ -1,0 +1,17 @@
+# THROWAWAY Phase 1 CPU probe config (see src/probe.ts). Deployed only to
+# measure real signing CPU on the Workers free plan; cron is removed right
+# after measurement. Secret PROBE_PRIVATE_KEY (a throwaway demo-agent key) is
+# set via `wrangler secret put` — never in this file, never in the repo.
+name = "agentscore-probe"
+main = "src/probe.ts"
+compatibility_date = "2024-12-01"
+
+# Parked after Phase 1 measurement — no schedule; fetch handler kept for reference.
+[triggers]
+crons = []
+
+[vars]
+ARC_RPC = "https://arc-testnet.drpc.org"
+
+[observability]
+enabled = true

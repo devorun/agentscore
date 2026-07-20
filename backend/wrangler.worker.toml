@@ -1,0 +1,23 @@
+# Cloudflare Cron settlement worker (free plan, $0) — src/cron.ts. Settles
+# deterministic jobs autonomously every minute so the live site works with no
+# local machine running. Secrets AGENT_LEXICA_PRIVATE_KEY and
+# ARBITER_PRIVATE_KEY are set via `wrangler secret put --config
+# wrangler.worker.toml` (testnet-only keys) — never in this file or the repo.
+#
+# IMPORTANT: while this cron is scheduled, run the local backend as
+# `npm run api` (read-only). `npm start` would start a second signing worker
+# and double-act on the same jobs.
+name = "agentscore-worker"
+main = "src/cron.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+ARC_RPC = "https://arc-testnet.drpc.org"
+AGENT_PRICE_USDC = "2"
+
+[observability]
+enabled = true
