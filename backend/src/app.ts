@@ -5,6 +5,7 @@ import { publicClient } from './lib/chain.js'
 import { erc8183Abi } from './lib/abi.js'
 import { API_ONLY, ARBITER_ADDRESS, ERC8183_ADDRESS, EXPLORER_URL, REGISTRY_ADDRESS, USDC_DECIMALS } from './lib/config.js'
 import { AGENTS } from './lib/agents.js'
+import { creditTerms } from './lib/credit.js'
 import { computeReputation } from './lib/reputation.js'
 import { recentJobs } from './lib/jobs.js'
 import { arbiterVerdicts } from './lib/verdicts.js'
@@ -54,6 +55,7 @@ app.get('/agent/:address', async (c) => {
     return c.json({
       address: r.address,
       score: r.score,
+      creditTerms: creditTerms(r.score),
       breakdown: { ...r.breakdown, volumeBonus: Number(r.breakdown.volumeBonus.toFixed(2)) },
       completionRate: r.completionRate,
       metrics: {

@@ -3,7 +3,8 @@ import { publicClient } from './chain.js'
 import { erc8183Abi } from './abi.js'
 import { ERC8183_ADDRESS, JobStatus, type JobStatusValue } from './config.js'
 import { fetchLogsByTopic, padAddressTopic } from './explorer.js'
-import { completionRate, computeScore, type AgentMetrics, type ScoreBreakdown } from './score.js'
+import { isCollateralJob } from './credit.js'
+import { completionRate, computeScore, type AgentMetrics, type CompletionRef, type ScoreBreakdown } from './score.js'
 
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
 const PAYMENT_RELEASED_TOPIC = keccak256(toHex('PaymentReleased(uint256,address,uint256)'))
@@ -80,10 +81,16 @@ export async function computeReputation(rawAddress: string): Promise<AgentReputa
   let expired = 0
   let expiredUnfunded = 0
   let settled6 = 0n
-  for (const job of jobs) {
+  const completions: CompletionRef[] = []
+  // Ascending jobId order so client-diversity weights are deterministic.
+  for (const job of [...jobs].reverse()) {
+    // Collateral mirror jobs are an escrow mechanism, not work — they never
+    // count toward (or against) anyone's reputation.
+    if (isCollateralJob(job.description)) continue
     if (job.status === JobStatus.Completed) {
       completed += 1
       settled6 += job.budget6
+      completions.push({ client: job.client, budget6: job.budget6 })
     } else if (job.status === JobStatus.Rejected) {
       rejected += 1
     } else if (job.status === JobStatus.Expired) {
@@ -93,6 +100,6 @@ export async function computeReputation(rawAddress: string): Promise<AgentReputa
   }
 
   const metrics: AgentMetrics = { totalJobs: jobs.length, completed, rejected, expired, expiredUnfunded, settled6, earnings6 }
-  const breakdown = computeScore(metrics)
+  const breakdown = computeScore(metrics, completions)
   return { address, score: breakdown.score, breakdown, metrics, completionRate: completionRate(metrics), jobs, truncated }
 }

@@ -28,24 +28,25 @@ describe('reputation scoring', () => {
   const zero = { totalJobs: 0, completed: 0, rejected: 0, expired: 0, expiredUnfunded: 0, settled6: 0n, earnings6: 0n }
 
   it('a new agent starts at 50', () => {
-    expect(computeScore(zero).score).toBe(50)
+    expect(computeScore(zero, []).score).toBe(50)
     expect(completionRate(zero)).toBeNull()
   })
 
   it('one approved settlement raises the score above base', () => {
-    const s = computeScore({ ...zero, totalJobs: 1, completed: 1, settled6: 10_000_000n, earnings6: 10_000_000n })
+    const m = { ...zero, totalJobs: 1, completed: 1, settled6: 10_000_000n, earnings6: 10_000_000n }
+    const s = computeScore(m, [{ client: '0xclient', budget6: 10_000_000n }])
     expect(s.approvalPoints).toBe(8)
     expect(s.score).toBeGreaterThan(50)
   })
 
   it('a rejected verdict penalizes and completion rate reflects it', () => {
     const m = { ...zero, totalJobs: 2, completed: 1, rejected: 1, settled6: 10_000_000n, earnings6: 10_000_000n }
-    expect(computeScore(m).rejectionPoints).toBe(-20)
+    expect(computeScore(m, [{ client: '0xclient', budget6: 10_000_000n }]).rejectionPoints).toBe(-20)
     expect(completionRate(m)).toBeCloseTo(0.5)
   })
 
   it('clamps to 0–100', () => {
     const bad = { ...zero, totalJobs: 5, rejected: 5 }
-    expect(computeScore(bad).score).toBe(0)
+    expect(computeScore(bad, []).score).toBe(0)
   })
 })

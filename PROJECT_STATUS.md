@@ -1,6 +1,6 @@
 # AgentScore — Project Status
 
-Current state of the project: what is built and proven, key addresses and network facts, run commands, and the remaining roadmap. Last updated 2026-07-19.
+Current state of the project: what is built and proven, key addresses and network facts, run commands, and the remaining roadmap. Last updated 2026-07-20.
 
 AgentScore is the **credit and trust infrastructure for the machine economy**, built on Arc Testnet: verifiable reputation determines the terms autonomous agents get, an independent AI arbiter settles their disputes, and financial primitives (credit, insurance) are built on top. Infrastructure any ERC-8183 job can plug into — not a freelance board.
 
@@ -24,9 +24,9 @@ Endpoints:
 - `GET /deliverable/:jobId` — the real work product + the arbiter's verification checks (Node-only)
 - `GET /nanopayments/:jobId` — the Circle Nanopayments per-row ledger for a job, off-chain rows + on-chain deposit/withdraw-mint (Node-only)
 
-Worker: the agent does **real deterministic work** (dedupe + risk-label a wallet dataset, $0, no LLM), hashes the actual output, submits it; the arbiter **re-derives the correct result and verifies** (schema / row count / no-duplicates / checksum-vs-onchain / exact-match) before `complete`, else `reject` + refund; verdict attested to the registry. 17 tests pass (`npm test`).
+Worker — **two verification models**: *verifiable computation* (the agent dedupes + risk-labels the dataset, $0/no LLM, and the arbiter **re-derives** the answer and checks schema / row count / no-duplicates / checksum-vs-onchain / exact-match) and *judged quality* (`[JUDGED]` jobs: the agent writes a real analyst memo with an LLM, and the arbiter **evaluates it against the spec with its own LLM call on a different model family** — never re-deriving — scoring a rubric and attesting a written reason). Settle → `complete`, fail → `reject` + refund; verdict attested to the registry. 37 tests pass (`npm test`).
 
-Scoring formula (also on the Arbiter page): start 50; +8 per approved settlement (diminishing to +2 after 10); −20 per rejected verdict; −10 per expired-unfunded abandonment; volume bonus up to +10 (log-scaled on lifetime USDC settled); clamp 0–100.
+Scoring formula (also on the Arbiter page): start 50; +8 per approved settlement (diminishing to +2 after 10), **weighted by client diversity** (the k-th settlement from the same client counts fully up to 3, then 3/k — self-farming decays); −20 per rejected verdict (**never** diversity-discounted — failures can't be laundered); −10 per expired-unfunded abandonment; volume bonus up to +10 (log-scaled on diversity-weighted USDC settled); clamp 0–100. Collateral mirror jobs excluded from all scores. The weighting applied to us too — Lexica's redemption settle paid +5, not +8. Documented limitation: distinct-wallet Sybil farming still works at linear cost (roadmap: stake-weighting + ERC-8004 identity).
 
 ### Frontend (`web/`, Vite + React + TS + wagmi/viem + Tailwind v4 + shadcn/ui)
 Pages: **Home** (agent showcase + secondary address lookup), **`/agent/:address`** (reputation profile), **`/hire/:address`** (create-job → fund-escrow flow, exact-amount approvals), **`/marketplace`** (M2M bounties + live onchain activity), **`/dashboard`** (connected-wallet jobs), **`/arbiter`** (address, integration snippet, verdict feed, methodology), **`/job/:id`** (live "Agent's Mind" terminal streaming real events + the deliverable panel), NotFound. Reads prefer the backend API with a graceful direct-chain fallback.
@@ -35,6 +35,12 @@ Pages: **Home** (agent showcase + secondary address lookup), **`/agent/:address`
 - **`#158635`** — first fully autonomous loop: Hire → agent setBudget → client fund → agent submit → arbiter complete + attest, zero human clicks after funding (client = the burner wallet).
 - **`#158648`** — **real work verified + settled**: agent deduped 18→15 rows + risk-labeled, submitted that output's hash; arbiter re-derived, all 5 checks passed → 2 USDC released to the agent.
 - **`#158649`** — **tampered → rejected + refunded**: faulty run left duplicates (18→18); arbiter caught it (✗ row count / ✗ no-duplicates / ✗ exact-match, though checksum held) → rejected, escrow refunded to the client.
+
+### Phase 1 — real AI agent + real AI arbiter (judged-quality jobs, live)
+`[JUDGED]` jobs (`backend/src/lib/judged.ts`): the agent writes a genuine analyst memo (`llama-3.3-70b-versatile`); the arbiter evaluates it against the spec with its **own** LLM call on a **different model family** (`openai/gpt-oss-120b`), scoring a rubric and writing a reason — it judges, never re-derives. **`reasonHash` = keccak of the written reasoning**, committed onchain in `complete`/`reject` + the attestation; the job page recomputes it client-side and shows the "hash matches onchain" check. $0 (Groq free tier); a missing key or rate-limit **fails loudly — a verdict is never fabricated**. Proofs: **`#158793`** judged pass (the arbiter caught a real flaw — a wrong wallet citation — scoring grounding 7/10) and **`#158794`** judged reject (lazy off-spec memo, 1/2/0/0). Demo: `LLM_API_KEY=… npm run demo:judged`.
+
+### Phase 2 — reputation → credit terms (economic consequence, live)
+`backend/src/lib/credit.ts` maps the live score to terms: **≥80 credit** (30% direct advance + 70% escrow), **50–79 standard** (full escrow), **<50 collateral** (50% slashable). No new Solidity: the advance is a direct client→agent transfer; collateral is a **mirror job on the same ERC-8183 reference** (agent funds, client is provider, arbiter is evaluator) — Circle's audited escrow custodies it, our contracts still hold no funds. Slash = arbiter `complete`s the mirror (pays the client); release = `reject` (refunds the agent). Terms are recorded in the main job's onchain `[TERMS …]` description; the worker gate refuses work until the advance/collateral is verified onchain. Proofs: **`#158800`** collateral released (Lexica redemption), **`#158802`/`#158803`** collateral **slashed** to the client, **`#158808`** credit hire with a real 0.6 USDC advance. Demo: `npm run demo:credit -- all`.
 
 ### Circle developer tools (live on Arc Testnet)
 - **Nanopayments + Gateway** (`backend/src/lib/nanopay.ts`) — the enrichment agent is paid **per row** in micro-USDC over x402 (gasless EIP-3009), settled by **Circle Gateway**, run **alongside** the escrow (never replacing it): off-chain batched per-row settlements plus an on-chain Gateway **deposit** (`0xdb66f74f…`) and agent **withdraw-mint** (`0x49390833…`), surfaced on the job page with an explicit off-chain-vs-on-chain split. Permissionless on testnet — no Circle API key. Gated by `NANOPAY_ENABLED` (default off). Demo: `NANOPAY_ENABLED=1 npm run demo:nanopay`.
@@ -91,6 +97,10 @@ cd backend && npm run demo
 cd backend && NANOPAY_ENABLED=1 npm run demo:nanopay   # per-row nanopayments over Gateway
 cd backend && npm run circle:setup                     # provision the developer-controlled Circle Wallet (writes CIRCLE_* to .env)
 cd backend && SIGNER_MODE=circle npm run demo:circle   # one Circle-signed job (Circle wallet signs setBudget + submit)
+
+# Phase 1/2 demos ($0; judged needs the free-tier LLM_API_KEY in backend/.env)
+cd backend && npm run demo:judged                      # judged-quality: memo → pass, lazy memo → reject (LLM arbiter)
+cd backend && npm run demo:credit -- all               # credit terms: collateral+redemption, slash, and a credit hire
 ```
 
 Do **not** also run `arbiter/run.mjs` — that standalone watcher is **superseded by the backend worker** and would double-act on the same jobs.
@@ -119,9 +129,9 @@ Positioning: reputation determines terms, the arbiter settles disputes, financia
 
 Product phases (in order):
 
-1. **Real AI agent + real AI arbiter** — the agent produces genuine LLM work (a new *judged-quality* job type alongside the existing *verifiable-computation* type); the arbiter evaluates the output against the job spec with its **own** LLM call — never re-deriving the work — and attests a written, hash-committed reason. Free-tier LLM only ($0; never require a paid key; deterministic path always works without one).
-2. **Reputation → credit terms + collateral** — the score sets escrow/collateral requirements and payment terms.
-3. **Agent-to-agent hiring + streaming payments + EURC multi-currency.**
+1. ✅ **Real AI agent + real AI arbiter** — DONE (§1): `[JUDGED]` jobs, LLM arbiter on a different model family, hash-committed written reasoning; deterministic path preserved as the second model.
+2. ✅ **Reputation → credit terms + collateral** — DONE (§1): score-gated advance / escrow / slashable collateral, plus client-diversity weighting against self-farming.
+3. **Agent-to-agent hiring + streaming payments + EURC multi-currency** — next.
 4. **Insurance pool + ERC-8004 interop.**
 5. **SDK + live economy map + 24/7 autonomous economy.**
 
@@ -137,7 +147,7 @@ Ship steps (after the build): deploy — frontend to Cloudflare Pages, read-only
 PROJECT_STATUS.md     project status (this file)
 README.md             overview + roadmap (ERC-8004 interop noted)
 contracts/            Foundry — AgentScoreRegistry + tests
-backend/              Node+TS — reputation API + arbiter worker; Circle nanopayments (lib/nanopay.ts), signer adapter (lib/signer.ts), circle-setup.ts, demo-nanopay.ts, demo-circle.ts (+ Dockerfile, wrangler.toml)
+backend/              Node+TS — reputation API + arbiter worker; judged-quality (lib/judged.ts) + credit terms (lib/credit.ts); Circle nanopayments (lib/nanopay.ts), signer adapter (lib/signer.ts); demo-{judged,credit,nanopay,circle}.ts, circle-setup.ts (+ Dockerfile, wrangler.toml)
 web/                  Vite React frontend (Tailwind + shadcn/ui)
 arbiter/              legacy standalone watcher (superseded by backend worker); holds gitignored .env
 ```

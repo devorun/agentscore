@@ -2,10 +2,14 @@ import { createWalletClient, getAddress, http, keccak256, parseUnits, toHex, typ
 import { privateKeyToAccount } from 'viem/accounts'
 import { publicClient } from './lib/chain.js'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
-import { arcTestnet, ARC_RPC, ERC8183_ADDRESS, EXPLORER_URL, JobStatus, REGISTRY_ADDRESS } from './lib/config.js'
+import { arcTestnet, ARC_RPC, ERC8183_ADDRESS, EXPLORER_URL, JobStatus, REGISTRY_ADDRESS, USDC_ADDRESS } from './lib/config.js'
+import { ADVANCE_PCT, COLLATERAL_PCT, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
 import { enrich, enrichTampered, hashOutput, loadInputDataset, verify } from './lib/enrichment.js'
 import { agentWriteMemo, arbiterJudge, isJudgedJob, isLazyRun, judgedSpec, llmKeyPresent, reasonHashOf } from './lib/judged.js'
 import { getDeliverable, saveDeliverable, setVerdict, type DeliverableRecord } from './lib/store.js'
+
+const TRANSFER_TOPIC = keccak256(toHex('Transfer(address,address,uint256)'))
+const topicAddress = (a: string) => `0x${'0'.repeat(24)}${a.slice(2).toLowerCase()}`
 
 const PRICE_6 = parseUnits(process.env.AGENT_PRICE_USDC || '10', 6)
 const POLL_MS = 6000
@@ -31,6 +35,7 @@ async function onchainDeliverable(jobId: bigint): Promise<`0x${string}` | undefi
 interface JobView {
   status: number
   budget: bigint
+  client: Address
   evaluator: Address
   expiredAt: bigint
   description: string
@@ -86,6 +91,89 @@ export async function startWorker(): Promise<void> {
     const hash = await wallet.writeContract(params)
     log(`${label} → ${tx(hash)}`)
     await publicClient.waitForTransactionReceipt({ hash })
+  }
+
+  /**
+   * The agent's side of credit terms — verify the advance landed (credit tier)
+   * or the collateral is posted and correctly shaped (collateral tier) BEFORE
+   * doing any work. This is orchestration + self-interest, not chain law: the
+   * agent protects itself exactly like a contractor checking the deposit.
+   */
+  async function termsSatisfied(jobId: bigint, job: JobView, terms: TermsMarker): Promise<boolean> {
+    if (terms.tier === 'credit') {
+      if (!terms.advanceTx) {
+        log(`job #${jobId} credit terms but no advance tx in marker — waiting`)
+        return false
+      }
+      const needed = (PRICE_6 * BigInt(ADVANCE_PCT)) / 100n
+      const rcpt = await publicClient.getTransactionReceipt({ hash: terms.advanceTx }).catch(() => null)
+      const paid =
+        rcpt?.status === 'success' &&
+        rcpt.logs.some(
+          (l) =>
+            getAddress(l.address) === getAddress(USDC_ADDRESS) &&
+            l.topics[0]?.toLowerCase() === TRANSFER_TOPIC.toLowerCase() &&
+            l.topics[1]?.toLowerCase() === topicAddress(job.client) &&
+            l.topics[2]?.toLowerCase() === topicAddress(AGENT) &&
+            BigInt(l.data) >= needed,
+        )
+      if (!paid) {
+        log(`job #${jobId} credit terms: advance of ${Number(needed) / 1e6} USDC not verified yet — not working`)
+        return false
+      }
+      return true
+    }
+    if (terms.tier === 'collateral') {
+      if (terms.collateralJobId === undefined) {
+        log(`job #${jobId} collateral terms but no collateral job in marker — not working`)
+        return false
+      }
+      const col = (await publicClient.readContract({
+        address: ERC8183_ADDRESS,
+        abi: erc8183Abi,
+        functionName: 'getJob',
+        args: [terms.collateralJobId],
+      })) as JobView
+      const needed = (PRICE_6 * BigInt(COLLATERAL_PCT)) / 100n
+      const ok =
+        isCollateralJob(col.description) &&
+        getAddress(col.client) === getAddress(job.provider) && // the agent funds it
+        getAddress(col.provider) === getAddress(job.client) && // the client is paid on slash
+        getAddress(col.evaluator) === ARBITER &&
+        (col.status === JobStatus.Funded || col.status === JobStatus.Submitted) &&
+        col.budget >= needed
+      if (!ok) {
+        log(`job #${jobId} collateral #${terms.collateralJobId} not verified (need ${Number(needed) / 1e6} USDC locked) — not working`)
+        return false
+      }
+      return true
+    }
+    return true
+  }
+
+  /**
+   * Linked collateral settlement, idempotent: once the main job is terminal,
+   * release the mirror-job collateral back to the agent (main settled → reject
+   * refunds its funder) or slash it to the client (main rejected → complete
+   * pays its provider). Never attested to the registry — collateral is an
+   * escrow mechanism, not work.
+   */
+  async function settleLinkedCollateralIfAny(jobId: bigint, job: JobView) {
+    const terms = parseTermsMarker(job.description)
+    if (terms?.collateralJobId === undefined) return
+    const colId = terms.collateralJobId
+    const col = (await publicClient.readContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'getJob', args: [colId] })) as JobView
+    if (col.status !== JobStatus.Funded && col.status !== JobStatus.Submitted) return // already settled
+    if (!isCollateralJob(col.description) || getAddress(col.evaluator) !== ARBITER) return
+    if (job.status === JobStatus.Completed) {
+      const reason = reasonHashOf(`Collateral released: main job #${jobId} settled cleanly.`)
+      await send(`arbiter release collateral #${colId} → refund to agent`, arbiter, { address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'reject', args: [colId, reason, '0x'] })
+      log(`↩ collateral #${colId} released back to the agent — main job #${jobId} settled.`)
+    } else {
+      const reason = reasonHashOf(`Collateral slashed: main job #${jobId} was rejected.`)
+      await send(`arbiter slash collateral #${colId} → pay client`, arbiter, { address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'complete', args: [colId, reason, '0x'] })
+      log(`⚔ collateral #${colId} slashed to the client — main job #${jobId} rejected.`)
+    }
   }
 
   /**
@@ -145,13 +233,19 @@ export async function startWorker(): Promise<void> {
     try {
       acting.add(jobId)
       if (agentShouldSetBudget(job)) {
-        await send(`agent setBudget #${jobId}`, agent, {
+        // Credit tier: the advance is paid directly, so escrow only the rest.
+        const terms = parseTermsMarker(job.description)
+        const escrow6 = terms?.tier === 'credit' ? (PRICE_6 * BigInt(100 - ADVANCE_PCT)) / 100n : PRICE_6
+        await send(`agent setBudget #${jobId}${terms?.tier === 'credit' ? ` (credit: ${100 - ADVANCE_PCT}% escrow after ${ADVANCE_PCT}% advance)` : ''}`, agent, {
           address: ERC8183_ADDRESS,
           abi: erc8183Abi,
           functionName: 'setBudget',
-          args: [jobId, PRICE_6, '0x'],
+          args: [jobId, escrow6, '0x'],
         })
       } else if (agentShouldSubmit(job)) {
+        // Credit-terms gate: no work until the terms are verifiably satisfied.
+        const jobTerms = parseTermsMarker(job.description)
+        if (jobTerms && !(await termsSatisfied(jobId, job, jobTerms))) return
         if (isJudgedJob(job.description)) {
           // Judged-quality job: the agent produces genuine LLM work. Without the
           // free-tier key we loudly skip — nothing is ever fabricated.
@@ -210,6 +304,12 @@ export async function startWorker(): Promise<void> {
           saveDeliverable(rec)
         }
       } else {
+        // Terminal jobs: settle any linked collateral (idempotent), then stop —
+        // no retry churn on already-settled jobs.
+        if (job.status === JobStatus.Completed || job.status === JobStatus.Rejected) {
+          await settleLinkedCollateralIfAny(jobId, job)
+          return
+        }
         // Arbiter genuinely verifies the produced deliverable before settling.
         const nowSec = Math.floor(Date.now() / 1000)
         if (nowSec >= Number(job.expiredAt)) {

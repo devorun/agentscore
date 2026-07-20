@@ -8,6 +8,7 @@ import { addressUrl, formatUsdc, shortAddress, txUrl } from '@/lib/format'
 import { useJobEvents, type JobEvent } from '@/hooks/useJobEvents'
 import { useDeliverable } from '@/hooks/useDeliverable'
 import { useNanopay } from '@/hooks/useNanopay'
+import { isCollateralJob, parseTermsMarker } from '@/lib/credit'
 import type { ApiDeliverable, ApiNanopay } from '@/lib/api'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
@@ -277,6 +278,7 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
           </p>
         </div>
       </div>
+      <CreditTermsJobPanel description={job.description} />
       {deliverable.data ? <VerificationModelBanner kind={deliverable.data.kind} /> : null}
       {deliverable.data ? (
         deliverable.data.kind === 'judged' ? (
@@ -454,6 +456,92 @@ function NanopaymentsPanel({ data }: { data: ApiNanopay }) {
         </div>
         <p className="text-[12px] leading-relaxed text-muted-foreground">{offchain.note}</p>
       </div>
+    </Card>
+  )
+}
+
+const TIER_STYLE: Record<'credit' | 'standard' | 'collateral', string> = {
+  credit: 'border-success/30 bg-success/10 text-success',
+  standard: 'border-neon/30 bg-neon/10 text-neon',
+  collateral: 'border-warning/30 bg-warning/10 text-warning',
+}
+
+// Credit terms recorded in the job's onchain description — reputation with
+// economic consequence, publicly auditable without any new contract. For
+// collateral jobs the linked mirror job's live status shows the outcome.
+function CreditTermsJobPanel({ description }: { description: string }) {
+  const terms = parseTermsMarker(description)
+  const isMirror = isCollateralJob(description)
+  const { data: colJob } = useReadContract({
+    address: ERC8183_ADDRESS,
+    abi: erc8183Abi,
+    functionName: 'getJob',
+    args: terms?.collateralJobId !== undefined ? [terms.collateralJobId] : undefined,
+    query: { enabled: terms?.collateralJobId !== undefined, refetchInterval: 8000 },
+  })
+
+  if (isMirror) {
+    return (
+      <Card className="flex flex-col gap-1 rounded-xl border-warning/30 bg-warning/5 p-4">
+        <span className="text-[13px] font-semibold text-warning">Collateral mirror job</span>
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
+          This job is an escrow mechanism, not work: an agent locked slashable collateral here (it is the paying
+          client; the hiring client is the provider; the arbiter is the evaluator). Settled = slashed to the client;
+          rejected = released back to the agent. Excluded from all reputation scores.
+        </p>
+      </Card>
+    )
+  }
+  if (!terms) return null
+
+  const colStatus = colJob ? Number((colJob as { status: number }).status) : undefined
+  const colOutcome =
+    colStatus === undefined
+      ? null
+      : colStatus === JobStatus.Completed
+        ? { label: 'SLASHED — forfeited to the client', cls: 'border-danger/30 bg-danger/10 text-danger' }
+        : colStatus === JobStatus.Rejected
+          ? { label: 'RELEASED — returned to the agent', cls: 'border-success/30 bg-success/10 text-success' }
+          : { label: 'LOCKED in escrow', cls: 'border-warning/30 bg-warning/10 text-warning' }
+
+  return (
+    <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Credit terms</h2>
+        <Badge variant="outline" className={cn('rounded-md text-[11px] font-medium uppercase tracking-wide', TIER_STYLE[terms.tier])}>
+          {terms.tier === 'credit' ? 'Credit — advance + escrow' : terms.tier === 'collateral' ? 'Collateral-backed' : 'Standard escrow'}
+        </Badge>
+        {terms.score !== undefined ? (
+          <span className="text-[13px] text-muted-foreground">
+            score at hire: <span className="tabular font-semibold text-foreground">{terms.score}</span>
+          </span>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-2">
+        {terms.advanceTx ? (
+          <Row label="Advance (paid directly, before work)" value={<ExplorerLink href={txUrl(terms.advanceTx)}>Arcscan</ExplorerLink>} />
+        ) : null}
+        {terms.collateralJobId !== undefined ? (
+          <Row
+            label="Collateral mirror job"
+            value={
+              <Link to={`/job/${terms.collateralJobId}`} className="tabular text-neon hover:opacity-80">
+                #{terms.collateralJobId.toString()}
+              </Link>
+            }
+          />
+        ) : null}
+        {colOutcome ? (
+          <Row
+            label="Collateral outcome"
+            value={<span className={cn('rounded-md border px-2 py-0.5 text-[12px]', colOutcome.cls)}>{colOutcome.label}</span>}
+          />
+        ) : null}
+      </div>
+      <p className="text-[12px] leading-relaxed text-muted-foreground">
+        Terms follow the agent’s live reputation at hire time and are recorded in this job’s onchain description.
+        Enforced by orchestration and self-interest, not chain law.
+      </p>
     </Card>
   )
 }

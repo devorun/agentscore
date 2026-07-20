@@ -19,7 +19,22 @@ async function apiGet<T>(path: string, timeoutMs = 4000): Promise<T> {
 export interface ApiAgent {
   address: `0x${string}`
   score: number
-  breakdown: { score: number; base: number; approvalPoints: number; rejectionPoints: number; abandonmentPoints: number; volumeBonus: number }
+  creditTerms?: {
+    tier: 'credit' | 'standard' | 'collateral'
+    advancePct: number
+    collateralPct: number
+    headline: string
+    detail: string
+  }
+  breakdown: {
+    score: number
+    base: number
+    approvalPoints: number
+    rejectionPoints: number
+    abandonmentPoints: number
+    volumeBonus: number
+    distinctClients: number
+  }
   completionRate: number | null
   metrics: { totalJobs: number; completed: number; rejected: number; expired: number; lifetimeEarningsUsdc: string; settledValueUsdc: string }
   jobs: {

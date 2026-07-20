@@ -6,6 +6,8 @@ import { parseEventLogs, parseUnits, zeroAddress } from 'viem'
 import { toast } from 'sonner'
 import { ArrowUpRight, Check, Loader2, ShieldCheck, Wallet } from 'lucide-react'
 import { findShowcaseAgent, isHireable } from '@/lib/agents'
+import { useAgentData } from '@/hooks/useAgentData'
+import { creditTerms, type CreditTerms } from '@/lib/credit'
 import { erc8183Abi, usdcAbi } from '@/lib/abi'
 import { wagmiConfig } from '@/lib/wagmi'
 import { ARBITER_ADDRESS, arcTestnet, ERC8183_ADDRESS, FAUCET_URL, USDC_ADDRESS, USDC_DECIMALS } from '@/lib/config'
@@ -17,9 +19,10 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
-type Step = 'create' | 'budget' | 'approve' | 'fund' | 'done'
+type Step = 'advance' | 'create' | 'budget' | 'approve' | 'fund' | 'done'
 const STEP_ORDER: Step[] = ['create', 'budget', 'approve', 'fund']
 const STEP_LABEL: Record<Step, string> = {
+  advance: 'Pay the advance directly to the agent',
   create: 'Create the job onchain',
   budget: 'Agent confirms the price',
   approve: 'Approve the exact USDC amount',
@@ -79,6 +82,19 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
   const [step, setStep] = useState<Step>('create')
   const [jobId, setJobId] = useState<bigint | undefined>()
   const [busy, setBusy] = useState(false)
+  const [advanceTx, setAdvanceTx] = useState<`0x${string}` | undefined>()
+
+  // Credit terms follow the agent's LIVE score at hire time.
+  const agentData = useAgentData(agent.address)
+  const liveScore = agentData.data?.breakdown.score
+  const terms = liveScore === undefined ? undefined : creditTerms(liveScore)
+  const advance6 = terms?.tier === 'credit' ? (budget6 * BigInt(terms.advancePct)) / 100n : 0n
+  const escrow6 = budget6 - advance6
+
+  // Credit tier starts with the advance step (working capital before work).
+  useEffect(() => {
+    if (terms?.tier === 'credit' && step === 'create' && !advanceTx) setStep('advance')
+  }, [terms?.tier, step, advanceTx])
 
   const { data: platformFeeBP } = useReadContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'platformFeeBP' })
   const { data: evaluatorFeeBP } = useReadContract({ address: ERC8183_ADDRESS, abi: erc8183Abi, functionName: 'evaluatorFeeBP' })
@@ -93,9 +109,10 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
   const { writeContractAsync } = useWriteContract()
 
   const feesLoaded = platformFeeBP !== undefined && evaluatorFeeBP !== undefined
-  const platformFee6 = feesLoaded ? (budget6 * (platformFeeBP as bigint)) / 10000n : 0n
-  const evaluatorFee6 = feesLoaded ? (budget6 * (evaluatorFeeBP as bigint)) / 10000n : 0n
-  const providerGets6 = budget6 - platformFee6 - evaluatorFee6
+  // Fees apply to the escrowed amount (what the reference contract sees).
+  const platformFee6 = feesLoaded ? (escrow6 * (platformFeeBP as bigint)) / 10000n : 0n
+  const evaluatorFee6 = feesLoaded ? (escrow6 * (evaluatorFeeBP as bigint)) / 10000n : 0n
+  const providerGets6 = escrow6 - platformFee6 - evaluatorFee6
 
   const insufficientUsdc = usdcBalance !== undefined && (usdcBalance as bigint) < budget6
   const insufficientGas = gas !== undefined && gas.value === 0n
@@ -125,15 +142,45 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
     }
   }, [step, jobId])
 
+  async function onAdvance() {
+    setBusy(true)
+    try {
+      const hash = await writeContractAsync({
+        address: USDC_ADDRESS,
+        abi: usdcAbi,
+        functionName: 'transfer',
+        args: [agent.address, advance6],
+      })
+      await waitForTransactionReceipt(wagmiConfig, { hash })
+      setAdvanceTx(hash)
+      setStep('create')
+      toast.success('Advance paid directly to the agent.', {
+        description: `${formatUsdc(advance6)} working capital, before any work.`,
+        action: { label: 'Arcscan', onClick: () => window.open(txUrl(hash), '_blank') },
+      })
+    } catch (err) {
+      toast.error('Transaction failed. Nothing was charged beyond gas.', {
+        description: err instanceof Error ? err.message.slice(0, 140) : undefined,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function onCreate() {
     setBusy(true)
     try {
       const expiredAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 3600)
+      // Credit-tier hires record the deal in the job's onchain description.
+      const finalDescription =
+        terms?.tier === 'credit' && advanceTx
+          ? `${description} [TERMS tier=credit score=${liveScore} advance=${advanceTx}]`
+          : description
       const hash = await writeContractAsync({
         address: ERC8183_ADDRESS,
         abi: erc8183Abi,
         functionName: 'createJob',
-        args: [agent.address, ARBITER_ADDRESS, expiredAt, description, zeroAddress],
+        args: [agent.address, ARBITER_ADDRESS, expiredAt, finalDescription, zeroAddress],
       })
       const receipt = await waitForTransactionReceipt(wagmiConfig, { hash })
       const logs = parseEventLogs({ abi: erc8183Abi, eventName: 'JobCreated', logs: receipt.logs })
@@ -232,10 +279,15 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
         </div>
       </div>
 
+      {terms ? <TermsCard terms={terms} /> : null}
+
       {/* Escrow preview — shown before any signature */}
       <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
         <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Escrow summary</h2>
-        <Row label="You pay (escrow)" value={<span className="tabular font-semibold text-foreground">{formatUsdc(budget6)}</span>} />
+        {terms?.tier === 'credit' ? (
+          <Row label={`Advance (${terms.advancePct}%, paid directly upfront)`} value={<span className="tabular font-semibold text-foreground">{formatUsdc(advance6)}</span>} />
+        ) : null}
+        <Row label="You pay (escrow)" value={<span className="tabular font-semibold text-foreground">{formatUsdc(escrow6)}</span>} />
         <Row label="Recipient (provider)" value={<ExplorerLink href={addressUrl(agent.address)}>{shortAddress(agent.address)}</ExplorerLink>} />
         <Row label="Evaluator (arbiter)" value={<ExplorerLink href={addressUrl(ARBITER_ADDRESS)}>{shortAddress(ARBITER_ADDRESS)}</ExplorerLink>} />
         <Row
@@ -272,8 +324,8 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
 
       {/* Steps */}
       <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
-        {STEP_ORDER.map((s, i) => {
-          const idx = STEP_ORDER.indexOf(step === 'done' ? 'fund' : step)
+        {(terms?.tier === 'credit' ? (['advance', ...STEP_ORDER] as Step[]) : STEP_ORDER).map((s, i, order) => {
+          const idx = order.indexOf(step === 'done' ? 'fund' : step)
           const done = step === 'done' ? true : i < idx
           const active = step !== 'done' && i === idx
           return (
@@ -305,9 +357,12 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
         insufficientUsdc={insufficientUsdc}
         insufficientGas={insufficientGas}
         budget6={budget6}
+        escrow6={escrow6}
+        advance6={advance6}
         step={step}
         busy={busy}
         onConnect={() => connect({ connector: connectors[0] })}
+        onAdvance={onAdvance}
         onCreate={onCreate}
         onApprove={onApprove}
         onFund={onFund}
@@ -331,20 +386,55 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+const TIER_STYLE: Record<CreditTerms['tier'], string> = {
+  credit: 'border-success/30 bg-success/10 text-success',
+  standard: 'border-neon/30 bg-neon/10 text-neon',
+  collateral: 'border-warning/30 bg-warning/10 text-warning',
+}
+
+// The hired agent's live credit terms — reputation with economic consequence.
+function TermsCard({ terms }: { terms: CreditTerms }) {
+  return (
+    <Card className="flex flex-col gap-2 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[13px] font-semibold uppercase tracking-wider text-muted-foreground">Credit terms</h2>
+        <Badge variant="outline" className={cn('rounded-md text-[11px] font-medium uppercase tracking-wide', TIER_STYLE[terms.tier])}>
+          {terms.headline}
+        </Badge>
+      </div>
+      <p className="text-[13px] leading-relaxed text-muted-foreground">{terms.detail}</p>
+      {terms.tier === 'collateral' ? (
+        <p className="text-[12px] leading-relaxed text-warning">
+          Collateral is agent-posted (a mirror job it must fund), so this manual hire proceeds as standard escrow — your
+          escrow stays refund-protected by the arbiter either way. The guided collateral flow runs in the orchestrated
+          agent-to-agent hiring.
+        </p>
+      ) : null}
+      <p className="text-[12px] leading-relaxed text-muted-foreground/80">
+        Terms are enforced by orchestration and self-interest, not chain law — the same way ignoring a credit bureau is
+        possible but expensive.
+      </p>
+    </Card>
+  )
+}
+
 function ActionZone(props: {
   isConnected: boolean
   onArc: boolean
   insufficientUsdc: boolean
   insufficientGas: boolean
   budget6: bigint
+  escrow6: bigint
+  advance6: bigint
   step: Step
   busy: boolean
   onConnect: () => void
+  onAdvance: () => void
   onCreate: () => void
   onApprove: () => void
   onFund: () => void
 }) {
-  const { isConnected, onArc, insufficientUsdc, insufficientGas, budget6, step, busy } = props
+  const { isConnected, onArc, insufficientUsdc, insufficientGas, budget6, escrow6, advance6, step, busy } = props
   const primary = 'h-11 w-full rounded-[9px] bg-primary font-medium text-primary-foreground hover:bg-[var(--primary-hover)]'
 
   if (!isConnected) {
@@ -366,6 +456,18 @@ function ActionZone(props: {
           Open faucet ↗
         </a>
       </Card>
+    )
+  }
+  if (step === 'advance') {
+    return (
+      <div className="flex flex-col gap-2">
+        {insufficientUsdc ? (
+          <p className="text-[13px] text-warning">Your USDC balance is below {formatUsdc(budget6)} (advance + escrow).</p>
+        ) : null}
+        <Button className={primary} onClick={props.onAdvance} disabled={busy || insufficientUsdc}>
+          {busy ? 'Paying advance…' : `Pay ${formatUsdc(advance6)} advance directly to the agent`}
+        </Button>
+      </div>
     )
   }
   if (step === 'create') {
@@ -393,7 +495,7 @@ function ActionZone(props: {
   if (step === 'approve') {
     return (
       <Button className={primary} onClick={props.onApprove} disabled={busy || insufficientUsdc}>
-        {busy ? 'Approving…' : `Approve exactly ${formatUsdc(budget6)}`}
+        {busy ? 'Approving…' : `Approve exactly ${formatUsdc(escrow6)}`}
       </Button>
     )
   }

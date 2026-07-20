@@ -5,7 +5,8 @@ import { erc8183Abi, registryAbi } from '../lib/abi'
 import { API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
 import { apiAgent, STATUS_INDEX, txHashFromUrl } from '../lib/api'
 import { fetchLogsByTopic, padAddressTopic } from '../lib/explorer'
-import { type AgentMetrics, computeScore, type ScoreBreakdown } from '../lib/score'
+import { isCollateralJob } from '../lib/credit'
+import { type AgentMetrics, type CompletionRef, computeScore, type ScoreBreakdown } from '../lib/score'
 
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
 const PAYMENT_RELEASED_TOPIC = keccak256(toHex('PaymentReleased(uint256,address,uint256)'))
@@ -153,11 +154,16 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   let expired = 0
   let expiredUnfunded = 0
   let settled6 = 0n
-  for (const job of jobs) {
+  const completions: CompletionRef[] = []
+  // Ascending jobId order for deterministic client-diversity weights; collateral
+  // mirror jobs are an escrow mechanism, not work — excluded entirely.
+  for (const job of [...jobs].reverse()) {
+    if (isCollateralJob(job.description)) continue
     switch (job.status) {
       case JobStatus.Completed:
         completed += 1
         settled6 += job.budget6
+        completions.push({ client: job.client, budget6: job.budget6 })
         break
       case JobStatus.Rejected:
         rejected += 1
@@ -182,7 +188,7 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   const profile = await loadRegistryProfile(address)
   const verdicts = await loadVerdicts(address)
 
-  return { address, metrics, breakdown: computeScore(metrics), jobs, truncated, profile, verdicts }
+  return { address, metrics, breakdown: computeScore(metrics, completions), jobs, truncated, profile, verdicts }
 }
 
 async function loadRegistryProfile(address: Address): Promise<RegistryProfile> {

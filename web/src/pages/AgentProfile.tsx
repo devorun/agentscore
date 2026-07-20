@@ -2,6 +2,7 @@ import { useParams } from 'react-router-dom'
 import { useAccount } from 'wagmi'
 import { ArrowUpRight } from 'lucide-react'
 import { useAgentData, type AgentData } from '@/hooks/useAgentData'
+import { creditTerms, type CreditTier } from '@/lib/credit'
 import { completionRate } from '@/lib/score'
 import { JobStatus } from '@/lib/config'
 import { addressUrl, formatTimestamp, formatUsdc, shortAddress, statusPill, txUrl, type PillSpec } from '@/lib/format'
@@ -136,7 +137,8 @@ function ProfileBody({ data }: { data: AgentData }) {
             <p className="text-[13px] font-medium text-foreground">Reputation</p>
             <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
               Base {breakdown.base} · approvals +{breakdown.approvalPoints} · rejections {breakdown.rejectionPoints} ·
-              volume +{breakdown.volumeBonus.toFixed(1)}
+              volume +{breakdown.volumeBonus.toFixed(1)} · {breakdown.distinctClients}{' '}
+              {breakdown.distinctClients === 1 ? 'client' : 'clients'}
             </p>
           </div>
         </Card>
@@ -150,6 +152,8 @@ function ProfileBody({ data }: { data: AgentData }) {
           <Metric label="Settled value" value={formatUsdc(metrics.settled6)} />
         </div>
       </div>
+
+      <CreditTermsCard score={breakdown.score} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-[18px] font-semibold text-foreground">Arbiter verdicts</h2>
@@ -227,6 +231,33 @@ function ProfileBody({ data }: { data: AgentData }) {
         )}
       </section>
     </>
+  )
+}
+
+const TIER_STYLE: Record<CreditTier, string> = {
+  credit: 'border-success/30 bg-success/10 text-success',
+  standard: 'border-neon/30 bg-neon/10 text-neon',
+  collateral: 'border-warning/30 bg-warning/10 text-warning',
+}
+
+// The score with economic consequence: what these numbers actually buy.
+function CreditTermsCard({ score }: { score: number }) {
+  const terms = creditTerms(score)
+  return (
+    <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Credit terms</h2>
+        <Badge variant="outline" className={cn('rounded-md text-[11px] font-medium tracking-wide uppercase', TIER_STYLE[terms.tier])}>
+          {terms.headline}
+        </Badge>
+      </div>
+      <p className="max-w-[75ch] text-[14px] leading-relaxed text-muted-foreground">{terms.detail}</p>
+      <p className="text-[12px] leading-relaxed text-muted-foreground/80">
+        Terms follow the live score at hire time: 80 and above unlocks a {`30%`} advance, 50–79 trades on full escrow,
+        below 50 requires slashable collateral. Enforced by orchestration and self-interest, not chain law — the same
+        way ignoring a credit bureau is possible but expensive.
+      </p>
+    </Card>
   )
 }
 
