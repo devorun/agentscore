@@ -1,0 +1,98 @@
+{
+  "158793": {
+    "jobId": "158793",
+    "kind": "judged",
+    "producedBy": "0x939ABdD89fE9C5aAC54615f56c50901acf5E6918",
+    "spec": "Produce a written risk-assessment memo on the provided wallet-activity dataset: methodology, findings for each risk band (low/medium/high) with concrete wallet references, at least three notable anomalies, and actionable recommendations for a treasury operator.",
+    "inputRows": 18,
+    "outputRows": 0,
+    "outputHash": "0x5315518d2516cc9d0f72978d8e838b37f9f6f1e201bbe94528bc92aa1226c0a3",
+    "memo": "### Methodology\nThis risk assessment is based on the analysis of a provided wallet-activity dataset, which includes wallet addresses, balances in USD, and transaction counts. The methodology involves categorizing wallets into low, medium, and high-risk bands based on their balance and transaction activity.\n\n### Risk Assessment Findings\n#### Low-Risk Band\nWallets with low balances and few transactions are considered low-risk. For example, `0x92a3b4c5d6e7f8091a2b3c4d5e6f708192930405` has a balance of $75 and only 3 transactions, and `0x4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70` has a balance of $320 and only 7 transactions.\n\n#### Medium-Risk Band\nWallets with moderate balances and transaction counts are considered medium-risk. For instance, `0x5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081` has a balance of $19,500 and 130 transactions, and `0x708192a3b4c5d6e7f8091a2b3c4d5e6f708192` has a balance of $640 and 210 transactions.\n\n#### High-Risk Band\nWallets with high balances and numerous transactions are considered high-risk. Examples include `0x1a2b3c4d5e6f70819293a4b5c6d7e8f901020304` with a balance of $245,000 and 1,820 transactions, and `0xd6e7f8091a2b3c4d5e6f70819293040516171819` with a balance of $410,000 and 12 transactions.\n\n### Notable Anomalies\n1. **Duplicate Wallets**: The dataset contains duplicate wallet entries, such as `0x1a2b3c4d5e6f70819293a4b5c6d7e8f901020304` and `0x3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f`, which may indicate data inconsistencies.\n2. **High Transaction Count**: `0xb4c5d6e7f8091a2b3c4d5e6f7081929304051617` has an unusually high transaction count of 1,450, considering its balance of $2,200.\n3. **Low Transaction Count for High Balance**: `0xd6e7f8091a2b3c4d5e6f70819293040516171819` has a high balance of $410,000 but only 12 transactions, which may indicate inactivity or potential security risks.\n\n### Actionable Recommendations\nFor a treasury operator, it is recommended to:\n* Monitor high-risk wallets closely for suspicious activity.\n* Investigate and resolve duplicate wallet entries to ensure data accuracy.\n* Implement additional security measures for wallets with high balances and low transaction counts.\n* Review and adjust risk assessment criteria regularly to ensure it remains effective in identifying potential risks.",
+    "agentModel": "llama-3.3-70b-versatile",
+    "submittedTx": "https://testnet.arcscan.app/tx/0x33154343f855738c086c423f555a36c924340bfb29acc977c31e29cef4408542",
+    "verdict": {
+      "outcome": "approved",
+      "rubric": [
+        {
+          "criterion": "Spec compliance",
+          "score": 9,
+          "max": 10,
+          "comment": "Includes methodology, risk bands with wallet examples, three anomalies, and recommendations as required."
+        },
+        {
+          "criterion": "Grounding in the dataset",
+          "score": 7,
+          "max": 10,
+          "comment": "Most wallet references match the data, but one medium‑risk example cites an incorrect address for the $640/210‑tx entry."
+        },
+        {
+          "criterion": "Completeness",
+          "score": 9,
+          "max": 10,
+          "comment": "Covers all requested sections; minor redundancy in duplicate entries but otherwise thorough."
+        },
+        {
+          "criterion": "Actionability",
+          "score": 8,
+          "max": 10,
+          "comment": "Recommendations are clear and implementable for a treasury operator, though could be more detailed."
+        }
+      ],
+      "reasoning": "The memo meets the core requirements, provides concrete wallet references and actionable steps, with only a small grounding error that does not undermine overall usefulness.",
+      "reasonHash": "0x1013a641fcb9005270abcf3232bbc178df1aa7d5ba1fd0744b9c5bab9accacf0",
+      "arbiterModel": "openai/gpt-oss-120b",
+      "deliverableHashMatch": true,
+      "verifiedAt": 1784502026,
+      "settleTx": "https://testnet.arcscan.app/tx/0x8563b06731e62ca5b05c09ee2c44279277630b4e1d69e84cf57597e3ab90c4f3"
+    },
+    "output": []
+  },
+  "158794": {
+    "jobId": "158794",
+    "kind": "judged",
+    "producedBy": "0x939ABdD89fE9C5aAC54615f56c50901acf5E6918",
+    "spec": "Produce a written risk-assessment memo on the provided wallet-activity dataset: methodology, findings for each risk band (low/medium/high) with concrete wallet references, at least three notable anomalies, and actionable recommendations for a treasury operator.",
+    "inputRows": 18,
+    "outputRows": 0,
+    "outputHash": "0xae66067cc309ec7735eda14786e91def842d31afb6417436f161796dc83d80d5",
+    "memo": "The dataset appears to contain various wallet addresses with differing balances and transaction counts.",
+    "agentModel": "llama-3.3-70b-versatile",
+    "submittedTx": "https://testnet.arcscan.app/tx/0x99159e85990630f59712c0a25806c6dd1dd105700e73666979445c829e231a16",
+    "verdict": {
+      "outcome": "rejected",
+      "rubric": [
+        {
+          "criterion": "Spec compliance",
+          "score": 1,
+          "max": 10,
+          "comment": "Only notes dataset existence, missing required sections."
+        },
+        {
+          "criterion": "Grounding in the dataset",
+          "score": 2,
+          "max": 10,
+          "comment": "Mentions varied balances but provides no concrete wallet references."
+        },
+        {
+          "criterion": "Completeness",
+          "score": 0,
+          "max": 10,
+          "comment": "Lacks methodology, risk band analysis, anomalies, and recommendations."
+        },
+        {
+          "criterion": "Actionability",
+          "score": 0,
+          "max": 10,
+          "comment": "No actionable recommendations for a treasury operator."
+        }
+      ],
+      "reasoning": "The deliverable is a single generic sentence, far short of the memo requirements; it fails to meet the spec on all fronts.",
+      "reasonHash": "0x02f481324402cc4a488370ee5fe3176a6367e3e7e29203a09a56d5168a63cf36",
+      "arbiterModel": "openai/gpt-oss-120b",
+      "deliverableHashMatch": true,
+      "verifiedAt": 1784502058,
+      "settleTx": "https://testnet.arcscan.app/tx/0x9ff115b6678f5e91d253c38564d1d5e042b3ce46336947ad329a99ccf4ce32b7"
+    },
+    "output": []
+  }
+}

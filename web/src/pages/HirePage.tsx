@@ -4,7 +4,7 @@ import { useAccount, useBalance, useChainId, useConnect, useReadContract, useWri
 import { readContract, waitForTransactionReceipt } from '@wagmi/core'
 import { parseEventLogs, parseUnits, zeroAddress } from 'viem'
 import { toast } from 'sonner'
-import { ArrowUpRight, Check, Loader2, ShieldCheck, Wallet } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Check, Loader2, ShieldCheck, Wallet } from 'lucide-react'
 import { findShowcaseAgent, isHireable } from '@/lib/agents'
 import { useAgentData } from '@/hooks/useAgentData'
 import { creditTerms, type CreditTerms } from '@/lib/credit'
@@ -18,6 +18,18 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+
+// Markers the protocol reserves in a job's onchain description. A visitor who
+// typed one would create a job the live cloud worker deliberately skips (or
+// mis-routes), leaving their escrow locked until the expiry refund — so the
+// hire input strips them before the job is created, and says so.
+const RESERVED_MARKERS = /\[\s*(JUDGED|LAZY|BAD|TERMS\b[^\]]*|COLLATERAL\b[^\]]*)\s*\]/gi
+
+export function stripReservedMarkers(text: string): { clean: string; found: string[] } {
+  const found = Array.from(text.matchAll(RESERVED_MARKERS)).map((m) => m[0])
+  const clean = text.replace(RESERVED_MARKERS, ' ').replace(/\s{2,}/g, ' ').trim()
+  return { clean, found }
+}
 
 type Step = 'advance' | 'create' | 'budget' | 'approve' | 'fund' | 'done'
 const STEP_ORDER: Step[] = ['create', 'budget', 'approve', 'fund']
@@ -79,6 +91,11 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
 
   const budget6 = useMemo(() => parseUnits(String(agent.pricePerJobUsdc), USDC_DECIMALS), [agent.pricePerJobUsdc])
   const [description, setDescription] = useState('Translate a product landing page into French, German, and Japanese.')
+  // Defuse the reserved-marker trap: a visitor who types [JUDGED], [TERMS …] or
+  // [COLLATERAL] would create a job the settlement worker skips or gates on,
+  // stranding their escrow until expiry. Strip them from what goes onchain, and
+  // tell the visitor exactly what was removed.
+  const reserved = useMemo(() => stripReservedMarkers(description), [description])
   const [step, setStep] = useState<Step>('create')
   const [jobId, setJobId] = useState<bigint | undefined>()
   const [busy, setBusy] = useState(false)
@@ -171,11 +188,13 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
     setBusy(true)
     try {
       const expiredAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 3600)
-      // Credit-tier hires record the deal in the job's onchain description.
+      // Strip any reserved markers from the visitor's text first; the app then
+      // appends its own [TERMS …] for credit hires, so only our marker survives.
+      const clean = stripReservedMarkers(description).clean
       const finalDescription =
         terms?.tier === 'credit' && advanceTx
-          ? `${description} [TERMS tier=credit score=${liveScore} advance=${advanceTx}]`
-          : description
+          ? `${clean} [TERMS tier=credit score=${liveScore} advance=${advanceTx}]`
+          : clean
       const hash = await writeContractAsync({
         address: ERC8183_ADDRESS,
         abi: erc8183Abi,
@@ -320,6 +339,17 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
           onChange={(e) => setDescription(e.target.value)}
           className="h-11 rounded-[9px] border-border bg-surface-1 text-foreground"
         />
+        {reserved.found.length > 0 ? (
+          <p className="flex items-start gap-2 text-[12px] leading-relaxed text-warning">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Reserved protocol {reserved.found.length === 1 ? 'marker' : 'markers'}{' '}
+              <span className="font-medium text-foreground">{reserved.found.join(' ')}</span> will be removed. These
+              route or gate jobs on the settlement worker — left in your description, they would strand your escrow until
+              the job expired. The job is created without them.
+            </span>
+          </p>
+        ) : null}
       </div>
 
       {/* Steps */}

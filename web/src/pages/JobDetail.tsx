@@ -9,6 +9,7 @@ import { useJobEvents, type JobEvent } from '@/hooks/useJobEvents'
 import { useDeliverable } from '@/hooks/useDeliverable'
 import { useNanopay } from '@/hooks/useNanopay'
 import { isCollateralJob, parseTermsMarker } from '@/lib/credit'
+import { showcaseDeliverable } from '@/lib/showcase'
 import type { ApiDeliverable, ApiNanopay } from '@/lib/api'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
@@ -253,6 +254,13 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
   }
   const lines = buildLiveLines(events.data ?? [], job.status as JobStatusValue, job.budget)
 
+  // Judged records live in the local demo path, so the two completed proof jobs
+  // ship with the app. A live API record always wins; the bundle is the
+  // fallback, and its authenticity is checked against the chain below.
+  const bundled = showcaseDeliverable(jobId.toString())
+  const record = deliverable.data ?? bundled
+  const fromBundle = !deliverable.data && Boolean(bundled)
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center gap-3">
@@ -283,12 +291,13 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
         </div>
       </div>
       <CreditTermsJobPanel description={job.description} />
-      {deliverable.data ? <VerificationModelBanner kind={deliverable.data.kind} /> : null}
-      {deliverable.data ? (
-        deliverable.data.kind === 'judged' ? (
-          <JudgedDeliverablePanel data={deliverable.data} events={events.data ?? []} />
+      {record ? <VerificationModelBanner kind={record.kind} /> : null}
+      {fromBundle ? <ShowcaseProvenanceCard /> : null}
+      {record ? (
+        record.kind === 'judged' ? (
+          <JudgedDeliverablePanel data={record} events={events.data ?? []} />
         ) : (
-          <DeliverablePanel data={deliverable.data} />
+          <DeliverablePanel data={record} />
         )
       ) : null}
       {nanopay.data ? <NanopaymentsPanel data={nanopay.data} /> : null}
@@ -550,6 +559,35 @@ function CreditTermsJobPanel({ description }: { description: string }) {
   )
 }
 
+// Says plainly where this record came from and why you don't have to trust it.
+// Judged jobs run in the local demo path (they need an LLM call plus a shared
+// deliverable store), so these completed records ship with the app — and the
+// browser proves their authenticity against the chain, below.
+function ShowcaseProvenanceCard() {
+  return (
+    <Card className="flex flex-col gap-2 rounded-xl border-neon/25 bg-neon/5 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-semibold text-foreground">Where this record comes from</span>
+        <Badge variant="outline" className="rounded-md border-neon/30 bg-neon/10 text-[11px] font-medium tracking-wide text-neon">
+          Served from the app bundle
+        </Badge>
+      </div>
+      <p className="max-w-[75ch] text-[13px] leading-relaxed text-muted-foreground">
+        This is a real completed job. Its deliverable and the arbiter’s evaluation are served from this app’s bundle
+        rather than a live API, because <span className="text-foreground">judged jobs currently run in the local demo
+        path</span> — they need an LLM call plus a shared deliverable store. Deterministic hires, by contrast, settle
+        live and unattended on the cloud settlement worker.
+      </p>
+      <p className="max-w-[75ch] text-[13px] leading-relaxed text-muted-foreground">
+        <span className="text-foreground">You do not have to trust the bundle.</span> Your browser recomputes the
+        keccak hash of the arbiter’s written reasoning and checks it against the verdict recorded in this job’s onchain
+        event. If a single character had been altered, the check below would fail. The chain vouches for this record —
+        we don’t.
+      </p>
+    </Card>
+  )
+}
+
 // Which verification model settled this job — the contrast is the point: some
 // work can be re-derived, some can only be judged.
 function VerificationModelBanner({ kind }: { kind: 'deterministic' | 'judged' }) {
@@ -717,21 +755,45 @@ function JudgedDeliverablePanel({ data, events }: { data: ApiDeliverable; events
           <p className="max-w-[75ch] rounded-lg border-l-2 border-neon/50 bg-surface-1 px-4 py-3 text-[13px] leading-relaxed text-foreground">
             {reasoning}
           </p>
-          <div className="flex flex-wrap items-center gap-2 text-[12px]">
-            {hashState === 'match' ? (
-              <span className="inline-flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-0.5 text-success">
-                ✓ keccak of this reasoning matches the onchain verdict
-              </span>
-            ) : hashState === 'mismatch' ? (
-              <span className="inline-flex items-center gap-1 rounded-md border border-danger/30 bg-danger/10 px-2 py-0.5 text-danger">
-                ✗ reasoning does not hash to the onchain verdict
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-muted-foreground">
-                verifying against onchain events…
-              </span>
+          {/* The credibility check, front and centre: computed in your browser,
+              compared to the verdict recorded onchain. */}
+          <div
+            className={cn(
+              'flex flex-col gap-2 rounded-lg border p-3',
+              hashState === 'match'
+                ? 'border-success/40 bg-success/10'
+                : hashState === 'mismatch'
+                  ? 'border-danger/40 bg-danger/10'
+                  : 'border-border bg-surface-1',
             )}
-            {settleEvent ? <ExplorerLink href={txUrl(settleEvent.txHash)}>verdict tx</ExplorerLink> : null}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={cn(
+                  'text-[13px] font-semibold',
+                  hashState === 'match' ? 'text-success' : hashState === 'mismatch' ? 'text-danger' : 'text-muted-foreground',
+                )}
+              >
+                {hashState === 'match'
+                  ? '✓ Verified in your browser against the chain'
+                  : hashState === 'mismatch'
+                    ? '✗ Integrity check failed — reasoning does not match the onchain verdict'
+                    : 'Verifying against onchain events…'}
+              </span>
+              {settleEvent ? <ExplorerLink href={txUrl(settleEvent.txHash)}>verdict tx</ExplorerLink> : null}
+            </div>
+            {computedHash ? (
+              <div className="grid grid-cols-1 gap-1 text-[12px] sm:grid-cols-[auto_1fr]">
+                <span className="text-muted-foreground/70">keccak(reasoning) computed here</span>
+                <span className="tabular break-all text-foreground">{computedHash}</span>
+                <span className="text-muted-foreground/70">reason recorded onchain</span>
+                <span className="tabular break-all text-foreground">{onchainReason ?? 'loading…'}</span>
+              </div>
+            ) : null}
+            <p className="text-[12px] leading-relaxed text-muted-foreground">
+              The arbiter committed the hash of its written reasoning onchain when it settled this job. Your browser
+              hashes the text shown above and compares — so the reasoning cannot have been edited after the fact.
+            </p>
           </div>
         </div>
       ) : null}
