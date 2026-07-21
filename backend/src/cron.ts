@@ -5,7 +5,9 @@
 // txs use roughly half the enforced budget; enforcement is ADAPTIVE — one
 // overrun degrades subsequent invocations — so this worker runs cool):
 //   - stateless: every tick re-derives everything from the chain (no KV, no FS)
-//   - reads via ONE multicall over the last K jobs + topic-filtered getLogs
+//   - EVENT-based discovery: our agent's jobs come from their JobCreated logs
+//     (provider-indexed, paginated), immune to churn on the shared contract;
+//     ONE multicall then reads their current state
 //   - RECEIPT-FREE sends with local nonce increments — never polls receipts;
 //     the next tick observes the resulting state and retries idempotently
 //   - hard cap of MAX_SENDS (2) transactions per tick
@@ -28,17 +30,26 @@ interface Env {
   AGENT_PRICE_USDC: string
   AGENT_LEXICA_PRIVATE_KEY: string
   ARBITER_PRIVATE_KEY: string
+  DISCOVERY_PAGES?: string
 }
 
 const ERC8183 = '0x0747EEf0706327138c69792bF28Cd525089e4583' as const
 const REGISTRY = '0x1489b56AaE4BB63e9793a151C12964B19bC99d38' as const
 const USDC = '0x3600000000000000000000000000000000000000' as const
 const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11' as const
-const SCAN_JOBS = 20n // how far back from jobCounter each tick looks
 const MAX_SENDS = 2 // measured-safe transaction budget per invocation
-// Arc RPCs reject eth_getLogs ranges above 10,000 blocks — stay under it. A
-// just-submitted job is minutes old, well inside this window.
+// Arc RPCs reject eth_getLogs ranges above 10,000 blocks — stay under it.
 const LOG_LOOKBACK = 9_000n
+const DISCOVERY_STEP = 9_000n // blocks per JobCreated getLogs page (< 10k cap)
+// Default discovery depth: 32 × 9000 blocks ≈ 1–2 days of history (Arc blocks
+// run ~0.5–0.8s), deep enough to survive a long worker outage and to recover
+// jobs stranded by the previous fixed 20-job window. Bounded so per-tick
+// subrequests stay well under the free plan's cap — jobAttested is batched into
+// the state multicall, so discovery cost does not grow with job history.
+// Override per-env with DISCOVERY_PAGES.
+const DEFAULT_DISCOVERY_PAGES = 32
+const TAIL_JOBS = 10n // counter-based safety net for the very newest jobs
+const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
 const JOB_SUBMITTED_TOPIC = keccak256(toHex('JobSubmitted(uint256,address,bytes32)'))
 const TRANSFER_TOPIC = keccak256(toHex('Transfer(address,address,uint256)'))
 const topicAddress = (a: string) => `0x${'0'.repeat(24)}${a.slice(2).toLowerCase()}`
@@ -68,9 +79,54 @@ interface JobView {
 
 interface TickReport {
   head: string
+  pages: number
+  discovered: number
   scanned: number
   sends: { action: string; jobId: string; tx: string }[]
   skipped: string[]
+}
+
+/** Event-based job discovery: the ids where `agent` is the provider, read from
+ * JobCreated logs over `pages` ranges of DISCOVERY_STEP blocks back from
+ * `blockHead`. Filtering by the provider topic makes discovery immune to
+ * unrelated churn on the shared contract. Pages run in parallel; a page that
+ * errors contributes nothing rather than failing the whole tick. */
+async function discoverAgentJobs(
+  pub: ReturnType<typeof createPublicClient>,
+  blockHead: bigint,
+  agent: Address,
+  pages: number,
+): Promise<Set<bigint>> {
+  const providerTopic = topicAddress(agent) as Hex
+  const ranges: { from: bigint; to: bigint }[] = []
+  for (let i = 0; i < pages; i++) {
+    const to = blockHead - BigInt(i) * DISCOVERY_STEP
+    if (to < 0n) break
+    ranges.push({ from: to > DISCOVERY_STEP ? to - DISCOVERY_STEP : 0n, to })
+  }
+  const perPage = await Promise.all(
+    ranges.map(async ({ from, to }) => {
+      try {
+        const logs = (await pub.request({
+          method: 'eth_getLogs',
+          params: [
+            {
+              address: ERC8183,
+              topics: [JOB_CREATED_TOPIC, null, null, providerTopic],
+              fromBlock: `0x${from.toString(16)}`,
+              toBlock: `0x${to.toString(16)}`,
+            },
+          ],
+        })) as { topics: Hex[] }[]
+        return logs.map((l) => BigInt(l.topics[1]))
+      } catch {
+        return [] as bigint[]
+      }
+    }),
+  )
+  const ids = new Set<bigint>()
+  for (const page of perPage) for (const id of page) ids.add(id)
+  return ids
 }
 
 /** One settlement tick: read state, perform at most MAX_SENDS transactions. */
@@ -85,17 +141,37 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   const arbiter = createWalletClient({ account: arbiterAccount, chain, transport: http(env.ARC_RPC) })
   const price6 = BigInt(Math.round(Number(env.AGENT_PRICE_USDC || '2') * 1e6))
 
-  const report: TickReport = { head: '0', scanned: 0, sends: [], skipped: [] }
+  const report: TickReport = { head: '0', pages: 0, discovered: 0, scanned: 0, sends: [], skipped: [] }
   const head = (await pub.readContract({ address: ERC8183, abi: erc8183Abi, functionName: 'jobCounter' })) as bigint
   report.head = head.toString()
-  const from = head > SCAN_JOBS ? head - SCAN_JOBS : 0n
-  const ids: bigint[] = []
-  for (let i = from; i < head; i++) ids.push(i)
+  const blockHead = await pub.getBlockNumber()
 
-  const states = await pub.multicall({
-    contracts: ids.map((jobId) => ({ address: ERC8183, abi: erc8183Abi, functionName: 'getJob' as const, args: [jobId] })),
+  // EVENT-based discovery: find our agent's jobs by their JobCreated logs
+  // (provider-indexed), so unrelated churn on the shared ERC-8183 contract can
+  // never push an eligible job out of view (the previous fixed 20-job window
+  // could, and did). A small counter tail is unioned in for brand-new jobs whose
+  // logs may not be indexed yet. Processed oldest-first, so stranded jobs recover
+  // before newer ones.
+  const pages = Math.max(1, Number(env.DISCOVERY_PAGES ?? '') || DEFAULT_DISCOVERY_PAGES)
+  report.pages = pages
+  const idSet = await discoverAgentJobs(pub, blockHead, AGENT, pages)
+  const tailFrom = head > TAIL_JOBS ? head - TAIL_JOBS : 0n
+  for (let i = tailFrom; i < head; i++) idSet.add(i)
+  const ids = Array.from(idSet).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  report.discovered = idSet.size
+
+  // One multicall reads BOTH getJob and the registry's jobAttested for every id,
+  // so the completed-job repair path costs no per-job subrequest — discovery can
+  // look back far without the loop's read count growing with job history.
+  const batch = await pub.multicall({
+    contracts: [
+      ...ids.map((jobId) => ({ address: ERC8183, abi: erc8183Abi, functionName: 'getJob' as const, args: [jobId] as const })),
+      ...ids.map((jobId) => ({ address: REGISTRY, abi: registryAbi, functionName: 'jobAttested' as const, args: [jobId] as const })),
+    ],
     allowFailure: true,
   })
+  const states = batch.slice(0, ids.length)
+  const attestedResults = batch.slice(ids.length)
   report.scanned = ids.length
 
   // Local nonces, incremented per send — receipts are never awaited.
@@ -181,7 +257,6 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   }
 
   const nowSec = Math.floor(Date.now() / 1000)
-  const blockHead = await pub.getBlockNumber()
 
   for (let i = 0; i < ids.length && report.sends.length < MAX_SENDS; i++) {
     const state = states[i]
@@ -242,7 +317,9 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
       })
     } else if (job.status === JobStatus.Completed || job.status === JobStatus.Rejected) {
       // Repairs, both idempotent: missing attestation, then linked collateral.
-      const attested = (await pub.readContract({ address: REGISTRY, abi: registryAbi, functionName: 'jobAttested', args: [jobId] }).catch(() => true)) as boolean
+      // jobAttested came from the batched multicall (no per-job subrequest).
+      const attestedRes = attestedResults[i]
+      const attested = attestedRes?.status === 'success' ? (attestedRes.result as boolean) : true
       if (!attested) {
         const good = job.status === JobStatus.Completed
         const reason = keccak256(toHex(good ? `agentscore:verified:job-${jobId}` : `agentscore:rejected-badwork:job-${jobId}`))

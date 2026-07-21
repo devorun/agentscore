@@ -159,6 +159,22 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
     }
   }, [step, jobId])
 
+  // Track how long we've sat at the pricing step, so the UI can stop implying
+  // "any second now" and give honest status if the worker is briefly behind —
+  // a visitor must never be left guessing at a spinner.
+  const [budgetSince, setBudgetSince] = useState<number | undefined>()
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (step !== 'budget') {
+      setBudgetSince(undefined)
+      return
+    }
+    setBudgetSince((prev) => prev ?? Date.now())
+    const id = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [step])
+  const pricingElapsedSec = step === 'budget' && budgetSince ? Math.max(0, Math.floor((nowMs - budgetSince) / 1000)) : 0
+
   async function onAdvance() {
     setBusy(true)
     try {
@@ -391,6 +407,8 @@ function HireFlow({ agent }: { agent: NonNullable<ReturnType<typeof findShowcase
         advance6={advance6}
         step={step}
         busy={busy}
+        pricingElapsedSec={pricingElapsedSec}
+        jobId={jobId}
         onConnect={() => connect({ connector: connectors[0] })}
         onAdvance={onAdvance}
         onCreate={onCreate}
@@ -458,13 +476,15 @@ function ActionZone(props: {
   advance6: bigint
   step: Step
   busy: boolean
+  pricingElapsedSec: number
+  jobId?: bigint
   onConnect: () => void
   onAdvance: () => void
   onCreate: () => void
   onApprove: () => void
   onFund: () => void
 }) {
-  const { isConnected, onArc, insufficientUsdc, insufficientGas, budget6, escrow6, advance6, step, busy } = props
+  const { isConnected, onArc, insufficientUsdc, insufficientGas, budget6, escrow6, advance6, step, busy, pricingElapsedSec, jobId } = props
   const primary = 'h-11 w-full rounded-[9px] bg-primary font-medium text-primary-foreground hover:bg-[var(--primary-hover)]'
 
   if (!isConnected) {
@@ -515,11 +535,41 @@ function ActionZone(props: {
     )
   }
   if (step === 'budget') {
+    // Up to ~2.5 min: normal wait (one cron tick ≈ a minute). Past that, stop
+    // spinning silently and tell the visitor the honest truth.
+    if (pricingElapsedSec < 150) {
+      return (
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-1 p-4 text-[14px] text-muted-foreground">
+          <Loader2 className="size-4 animate-spin text-neon" />
+          Waiting for the agent to price the job onchain — the autonomous worker runs about once a minute
+          {pricingElapsedSec > 0 ? ` (${pricingElapsedSec}s)` : ''}.
+        </div>
+      )
+    }
     return (
-      <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-1 p-4 text-[14px] text-muted-foreground">
-        <Loader2 className="size-4 animate-spin text-neon" />
-        Waiting for the agent to price the job onchain — the autonomous worker runs every minute, typically under 90 seconds.
-      </div>
+      <Card className="flex flex-col gap-2 rounded-xl border-warning/30 bg-warning/5 p-4">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="size-4 shrink-0 text-warning" />
+          <span className="text-[14px] font-medium text-foreground">Pricing is taking longer than usual</span>
+        </div>
+        <p className="max-w-[70ch] text-[13px] leading-relaxed text-muted-foreground">
+          {jobId !== undefined ? (
+            <>
+              Your job <span className="text-foreground">#{jobId.toString()}</span> is already onchain and{' '}
+            </>
+          ) : (
+            'Your job is already onchain and '
+          )}
+          <span className="text-foreground">unfunded — nothing is at risk and no USDC is committed yet.</span> The
+          autonomous settlement worker prices new jobs about once a minute; occasionally it runs a little behind. You can
+          safely leave this page and come back — pricing still applies when it lands — or start a fresh hire.
+        </p>
+        {jobId !== undefined ? (
+          <Link to={`/job/${jobId.toString()}`} className="text-[13px] text-neon hover:opacity-80">
+            View job #{jobId.toString()} →
+          </Link>
+        ) : null}
+      </Card>
     )
   }
   if (step === 'approve') {
