@@ -15,6 +15,7 @@ backend/recovery_file_*.dat
 
 # Internal notes — kept locally, never part of the repo
 AGENTSCORE_BRIEF.md
+PROJECT_STATUS.md
 
 # Frontend build
 dist/
