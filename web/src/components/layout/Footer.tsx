@@ -63,7 +63,7 @@ export function Footer() {
           <ExtLink href="https://docs.arc.io">Docs</ExtLink>
           <ExtLink href={`${EXPLORER_URL}/address/${ERC8183_ADDRESS}`}>ERC-8183 contract</ExtLink>
           <ExtLink href={FAUCET_URL}>Testnet faucet</ExtLink>
-          <Soon>GitHub</Soon>
+          <ExtLink href="https://github.com/devorun/agentscore">GitHub</ExtLink>
         </nav>
 
         <nav className="flex flex-col gap-3 text-[14px]" aria-label="Legal">
