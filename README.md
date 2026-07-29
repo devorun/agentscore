@@ -26,6 +26,16 @@ Each is a real, settled job on Arc Testnet — open the job page for the events,
 - **AI arbiter catching a real flaw** — [job #158793](https://agentscore-app.pages.dev/job/158793): the agent wrote an analyst memo; an independent LLM arbiter (a **different model family**) found a **wrong wallet citation**, scored grounding 7/10, and committed the keccak of its written reasoning on-chain. The browser recomputes that hash and matches it against the verdict event.
 - **AI arbiter rejecting an off-spec memo** — [job #158794](https://agentscore-app.pages.dev/job/158794): a lazy one-line memo, scored 1/2/0/0 and rejected.
 
+## Architecture
+
+![AgentScore architecture — Cloudflare frontend/API/cron worker, external signer and LLM, and Arc Testnet contracts](docs/architecture.png)
+
+AgentScore runs as three layers:
+
+- **Cloudflare — frontend, API, and settlement worker.** The dApp is a static React build on Cloudflare Pages; a read-only Worker serves computed reputation and job reads; and a **Cron Worker** fires every minute to price and settle jobs autonomously, so a hire completes with no local machine running. All three are free-tier — $0, no card.
+- **External signer and LLM.** Transactions are signed by testnet keys held as Cloudflare Secrets, or optionally by a developer-controlled **Circle Wallet** (`SIGNER_MODE=circle`) whose key Circle custodies. `[JUDGED]` jobs call an LLM: the agent writes an analyst memo and an **independent arbiter model — a different family** — scores it against the spec, never self-grading. The keccak of the arbiter's written reasoning is committed on-chain.
+- **Arc Testnet contracts.** Escrow lives in Circle's **ERC-8183 AgenticCommerce** reference contract — the settlement of record. Our own data-only **AgentScoreRegistry** stores agent profiles and the arbiter's verdict attestations and **holds no funds**. Reputation is computed only from settled on-chain USDC work.
+
 ## What's here
 
 - **Reputation engine** — indexes the full ERC-8183 job history from Arc Testnet and computes a verifiable 0–100 score per agent (completion rate, lifetime USDC earnings, disputes, volume).
@@ -56,20 +66,153 @@ Which Circle tools AgentScore uses, where they live in the code, and a live Arc 
 - **Wallets (developer-controlled).** A Circle Wallet signs as a *separate* "Circle-signed" agent with its own address (`0xc514…`, env-selected via `SIGNER_MODE=circle`): it signed **`setBudget` + `submit`** for job **#158772**, which the raw-key arbiter verified and settled — the proven raw-key agent (`0x939A…`) and all existing proofs stay untouched. Provision with `cd backend && npm run circle:setup`, then run the demo with `SIGNER_MODE=circle npm run demo:circle` (free, no card).
 - **Paymaster — deliberately skipped.** Circle Paymaster lets users pay gas in USDC instead of a native token. **On Arc, USDC already *is* the native gas token**, so there is nothing to abstract, and Arc is not on Circle Paymaster's supported-chain list. We document the choice rather than bolt on a redundant integration.
 
-## Run
+## Circle Product Feedback
 
-Prerequisites: Node 24+ and Foundry (`forge`) for contracts. Copy each `.env.example` to `.env` and fill it with your **own Arc Testnet** keys — never commit them.
+Honest, build-derived feedback on each Circle product we used — what worked, what bit us, and what would help the next integrator. Every item below is something we actually hit on Arc Testnet.
+
+### Contracts — ERC-8183 AgenticCommerce reference
+
+- **Why we chose it.** It is the on-chain settlement primitive for agent commerce on Arc (`createJob`, `setBudget`, `fund`, `submit`, `complete`/`reject`), so we never had to write or audit our own escrow — our registry stays data-only and holds no funds.
+- **What worked.** The job lifecycle maps cleanly onto an autonomous agent loop, and `jobId` is indexed on every event, which let our settlement worker re-derive all state from logs with no database.
+- **What could be improved.** There is no first-class "jobs by provider/evaluator" read — you either walk `jobCounter` or filter logs, and on a shared contract the counter churns fast, so a naive last-N-jobs scan misses your jobs during busy periods. Fee mechanics (`platformFeeBP` / `evaluatorFeeBP`) took reading the ABI to pin down.
+- **Recommendation.** Publish a documented events schema or a hosted indexer/subgraph, and expose provider/evaluator-scoped views so integrators don't rebuild an indexer just to find their own jobs.
+
+### Nanopayments (x402) + Gateway
+
+- **Why we chose it.** To pay the enrichment agent **per row** in micro-USDC without a transaction per row — gasless EIP-3009 authorizations, batch-settled — running *alongside* the escrow, never replacing it.
+- **What worked.** `createGatewayMiddleware` + `GatewayClient.pay()` is genuinely elegant: permissionless on testnet (no API key), instant off-chain settlement, and a clean on-chain footprint (one Gateway deposit, one same-chain withdraw-mint).
+- **What could be improved — all real, all cost us time:**
+  - **The facilitator defaults to *mainnet*.** You must pass the testnet facilitator explicitly (`facilitatorUrl: GATEWAY_API_TESTNET`) or payments silently target the wrong network.
+  - **A full-balance withdraw fails.** Gateway debits *value + a transfer fee*, so `withdraw(available)` reverts. We reserve a fee buffer and withdraw `available − buffer`; the fee isn't surfaced by the client.
+  - **The SDK hardcodes the rate-limited official Arc RPC** for the withdraw-mint. The mint lands on-chain, but the SDK's own receipt read throws under HTTP 429, so `withdraw()` rejects on a transaction that actually **succeeded**. We override `CHAIN_CONFIGS.arcTestnet.rpcUrl`, then recover the hash from the thrown error and confirm the receipt via our own RPC.
+  - **Deposit availability lags.** After `deposit()`, `gateway.available` isn't immediately spendable; we poll up to ~150s.
+- **Recommendation.** Let callers inject the RPC/transport for both the mint and its receipt read (or default to a resilient RPC and make receipt confirmation retry/optional); expose the withdrawal fee and add a `withdrawMax()`; default to the testnet facilitator on testnet; document deposit-availability latency.
+
+### Developer-controlled Wallets
+
+- **Why we chose it.** To run an agent whose signing key we *never hold* — Circle custodies it — issuing real Arc contract writes (`setBudget`, `submit`) as a separate "Circle-signed" agent, leaving our raw-key agent and every prior proof untouched.
+- **What worked.** `createContractExecutionTransaction` with viem-encoded calldata is clean, and `getTransaction({ waitForTxHash: true })` returns the hash once broadcast. Mode-switching (`SIGNER_MODE=circle`) kept it fully isolated from the always-on worker.
+- **What could be improved.** Provisioning needs four correlated values (API key, entity secret, wallet set, wallet id) and is easy to get wrong — we wrote a `circle:setup` script precisely for that. Final on-chain confirmation is still on you (Circle returns state + txHash; we wait for the receipt via our own RPC). Fee control is a coarse `LOW/MEDIUM/HIGH` enum.
+- **Recommendation.** A one-command provision that returns all four env values; an optional built-in receipt-confirmation step; finer fee control.
+
+### Paymaster — deliberately skipped
+
+- **Why we skipped it.** Circle Paymaster lets users pay gas in USDC instead of a native token. **On Arc, USDC already *is* the native gas token**, so there is nothing to abstract — a Paymaster is redundant — and Arc isn't on Paymaster's supported-chain list.
+- **Recommendation.** State per-chain applicability up front: on chains where USDC is the native gas token, Paymaster is a no-op. Saying so in the docs saves integrators the evaluation.
+
+### Arc Testnet & hosting notes
+
+- **`eth_getLogs` is capped at ~10,000 blocks** on the Arc RPCs — larger ranges are rejected — so our log-based discovery paginates in 9,000-block windows.
+- **The official Arc RPC (`rpc.testnet.arc.network`) rate-limits hard** under load (we measured ~3 of 24 requests OK in a burst, the rest HTTP 429), which broke live flows and the Gateway SDK's receipt reads. We moved all reads, the worker, and the wallet params to **dRPC** (`arc-testnet.drpc.org`), which handled the load.
+- **The free-tier Cloudflare Workers CPU budget** shaped the settlement worker: it is stateless (re-derives from chain each tick), sends receipt-free with local nonces, batches reads into one multicall, and caps at **2 transactions per tick** — measured to sit within budget.
+
+## Setup & run
+
+Everything is **Arc Testnet only** and **$0** (no card): all USDC is faucet test tokens.
+
+### Prerequisites
+
+- **Node 24+** and npm
+- **Foundry** (`forge`, `cast`) — https://getfoundry.sh
+- **git** with submodules — the contracts vendor `forge-std` and `openzeppelin-contracts`
 
 ```
-# Contracts — tests
-cd contracts && forge test
-
-# Backend — reputation API + arbiter worker (port 8787)
-cd backend && npm install && npm start
-
-# Frontend — Vite dev server (port 5173)
-cd web && npm install && npm run dev
+git clone https://github.com/devorun/agentscore
+cd agentscore
+git submodule update --init --recursive
 ```
+
+### Environment
+
+Copy each template and fill it with **your own testnet keys** — never commit `.env`.
+
+```
+cp backend/.env.example backend/.env
+cp web/.env.example web/.env
+```
+
+**Backend (`backend/.env`):**
+
+| Variable | What it is / where to get it |
+|---|---|
+| `ARC_RPC` | Arc Testnet RPC. Default `https://arc-testnet.drpc.org` (dRPC handles load; the official RPC 429s). |
+| `REGISTRY_ADDRESS` | Deployed AgentScoreRegistry — `0x1489b56AaE4BB63e9793a151C12964B19bC99d38`, or your own deploy. |
+| `ARBITER_PRIVATE_KEY`, `AGENT_LEXICA_PRIVATE_KEY` | Two testnet EOAs (arbiter + agent). Generate fresh keys; fund them from the **Circle faucet** (https://faucet.circle.com). Required unless `API_ONLY=1`. |
+| `DEMO_CLIENT_ADDRESS`, `DEMO_CLIENT_PRIVATE_KEY` | A third testnet EOA that plays the client in demos. Fund from the faucet. |
+| `AGENT_PRICE_USDC` | Price the agent sets per job. Optional (defaults to 10). |
+| `LLM_API_KEY`, `LLM_API_URL`, `AGENT_LLM_MODEL`, `ARBITER_LLM_MODEL` | For `[JUDGED]` jobs only. Free-tier **Groq** key (https://console.groq.com, no card). Leave blank to run at $0 — deterministic jobs still work; judged jobs are skipped, never faked. Agent and arbiter use **different model families** by default. |
+| `CREDIT_ADVANCE_PCT`, `CREDIT_COLLATERAL_PCT` | Credit-tier tuning. Optional (defaults 30 / 50). |
+| `NANOPAY_ENABLED` | `1` to also meter per-row nanopayments over Gateway. Permissionless — no key. |
+| `SIGNER_MODE` | `raw` (default) or `circle` (route the agent's txs through a developer-controlled Circle Wallet). |
+| `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_WALLET_SET_ID`, `CIRCLE_AGENT_WALLET_ID` | Only for `SIGNER_MODE=circle`. Create a free Sandbox/Testnet app at https://console.circle.com/signup, then run `npm run circle:setup` to provision the wallet and fill these. |
+
+**Frontend (`web/.env`):**
+
+| Variable | What it is |
+|---|---|
+| `VITE_API_URL` | Backend API base URL (e.g. `http://localhost:8787`). Falls back to direct-chain reads if unset. |
+| `VITE_REGISTRY_ADDRESS` | AgentScoreRegistry address (same as backend). |
+| `VITE_REGISTRY_DEPLOY_BLOCK` | Block the registry was deployed at (narrows event scans). Optional. |
+
+### Contracts
+
+```
+cd contracts
+forge test            # full suite, 100% coverage on the registry
+forge build
+```
+
+### Backend
+
+```
+cd backend
+npm install
+npm test              # 37 tests
+npm start             # reputation API + always-on agent/arbiter worker (port 8787)
+npm run api           # read-only API only (no signing worker) — use this when a cloud worker signs
+```
+
+### Frontend
+
+```
+cd web
+npm install
+npm run dev           # http://localhost:5173
+npm run build         # production build → dist/
+```
+
+### Settlement worker
+
+`npm start` runs the always-on agent + arbiter worker locally. In production it runs as a **Cloudflare Cron Worker** (every minute) so hires settle with no local machine:
+
+```
+cd backend
+npx wrangler deploy --config wrangler.worker.toml   # your Cloudflare account
+```
+
+Signing keys reach Cloudflare only via `wrangler secret put` — never the repo. Do **not** run the local `npm start` worker while a cloud cron is scheduled (two signers would double-act on the same jobs); run `npm run api` locally instead.
+
+### Demos (reproduce the on-chain proofs)
+
+```
+cd backend
+npm run demo                              # real settle + tampered reject
+npm run demo:judged                       # LLM agent writes a memo; LLM arbiter (different family) judges → pass + reject
+npm run demo:credit -- all                # reputation → credit terms: advance, collateral release, collateral slash
+NANOPAY_ENABLED=1 npm run demo:nanopay    # per-row nanopayments over Gateway
+npm run circle:setup                      # provision the developer-controlled Circle Wallet
+SIGNER_MODE=circle npm run demo:circle    # one job signed by the Circle Wallet
+```
+
+### How each Circle tool is integrated (code map)
+
+| Circle tool | Where in code | How it's wired |
+|---|---|---|
+| **ERC-8183 Contracts** | `backend/src/cron.ts`, `backend/src/worker.ts`, `backend/src/lib/abi.ts` | The worker reads jobs (one multicall + topic-filtered `getLogs`) and drives `setBudget` / `submit` / `complete` / `reject`; escrow lives entirely in the reference contract. |
+| **Nanopayments (x402)** | `backend/src/lib/nanopay.ts` — `ensureSeller` → `createGatewayMiddleware`; `meterJobRows` → `GatewayClient.pay` | An x402-protected seller endpoint charges the per-row price; the buyer pays one gasless authorization per enriched row; a per-job ledger is surfaced on the job page. |
+| **Gateway** | `backend/src/lib/nanopay.ts` — `GatewayClient.deposit` / `withdraw` | One deposit capitalizes the buyer's Gateway balance; the agent realizes earnings with a same-chain instant **withdraw-mint**; the deposit + mint txs are recorded on the ledger. |
+| **Developer-controlled Wallets** | `backend/src/lib/signer.ts` — `circleAgentSigner`; `backend/src/circle-setup.ts` | `createContractExecutionTransaction` submits viem-encoded calldata via Circle; `SIGNER_MODE=circle` swaps the agent signer with no change to the arbiter or worker. |
+| **Paymaster** | — | Not integrated, by design (USDC is Arc's native gas token). |
 
 ## Verified Arc Testnet facts
 
