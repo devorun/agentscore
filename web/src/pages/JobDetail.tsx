@@ -10,7 +10,7 @@ import { useDeliverable } from '@/hooks/useDeliverable'
 import { useNanopay } from '@/hooks/useNanopay'
 import { isCollateralJob, parseTermsMarker } from '@/lib/credit'
 import { showcaseDeliverable } from '@/lib/showcase'
-import type { ApiAppeal, ApiDeliverable, ApiNanopay } from '@/lib/api'
+import type { ApiAppeal, ApiDeliverable, ApiNanopay, ApiSubcontract } from '@/lib/api'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
@@ -260,6 +260,8 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
   const bundled = showcaseDeliverable(jobId.toString())
   const record = deliverable.data ?? bundled
   const fromBundle = !deliverable.data && Boolean(bundled)
+  // Item 3: this job is a subcontract if its onchain description links to a main job.
+  const subcontractOfMain = subcontractMainId(job.description)
 
   return (
     <div className="flex flex-col gap-6">
@@ -291,6 +293,7 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
         </div>
       </div>
       <CreditTermsJobPanel description={job.description} />
+      {subcontractOfMain ? <SubcontractOfBanner mainId={subcontractOfMain} /> : null}
       {record ? <VerificationModelBanner kind={record.kind} /> : null}
       {fromBundle ? <ShowcaseProvenanceCard /> : null}
       {record ? (
@@ -301,8 +304,77 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
         )
       ) : null}
       {record?.appeal ? <AppealPanel jobId={jobId} appeal={record.appeal} /> : null}
+      {record?.subcontracts && record.subcontracts.length > 0 ? <SubcontractsPanel subs={record.subcontracts} /> : null}
       {nanopay.data ? <NanopaymentsPanel data={nanopay.data} /> : null}
     </div>
+  )
+}
+
+// Item 3: parse [SUBCONTRACT main=#N] from a job's onchain description.
+function subcontractMainId(description: string): bigint | null {
+  const m = description.match(/\[SUBCONTRACT\s+main=#?(\d+)\]/i)
+  return m ? BigInt(m[1]) : null
+}
+
+// Shown on a SUB-job: it is a slice of work a prime agent delegated to this
+// specialist. The link back to the main job is in this job's onchain description.
+function SubcontractOfBanner({ mainId }: { mainId: bigint }) {
+  return (
+    <Card className="flex flex-col gap-2 rounded-xl border-neon/25 bg-neon/5 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-semibold text-foreground">Subcontracted work</span>
+        <Badge variant="outline" className="rounded-md border-neon/30 bg-neon/10 text-[11px] font-medium tracking-wide text-neon">
+          Agent-to-agent
+        </Badge>
+      </div>
+      <p className="max-w-[75ch] text-[13px] leading-relaxed text-muted-foreground">
+        This job is a <span className="text-foreground">slice of work a prime agent delegated to this specialist</span> and paid
+        for from its own balance. It links to its parent onchain via a <span className="tabular">[SUBCONTRACT]</span> marker.
+      </p>
+      <Link to={`/job/${mainId.toString()}`} className="text-[13px] text-neon hover:opacity-80">
+        View the main job #{mainId.toString()} →
+      </Link>
+    </Card>
+  )
+}
+
+// Shown on a MAIN job: the parts it delegated to specialist agents, each paid
+// from the prime's own earnings. Both jobs are real, settled ERC-8183 jobs.
+function SubcontractsPanel({ subs }: { subs: ApiSubcontract[] }) {
+  return (
+    <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Subcontracted parts</h2>
+        <Badge variant="outline" className="rounded-md border-neon/30 bg-neon/10 text-[11px] font-medium tracking-wide text-neon">
+          Agent-to-agent hiring
+        </Badge>
+      </div>
+      <p className="max-w-[75ch] text-[13px] leading-relaxed text-muted-foreground">
+        To fulfil this job the agent <span className="text-foreground">hired specialist agents for parts of the work</span> and
+        paid them from its own earnings — each part is its own real, settled onchain job.
+      </p>
+      <div className="flex flex-col gap-3">
+        {subs.map((s) => (
+          <div key={s.jobId} className="flex flex-col gap-2 rounded-lg border border-border bg-surface-1 p-4">
+            <div className="flex flex-wrap items-center gap-2 text-[13px]">
+              <Link to={`/job/${s.jobId}`} className="font-semibold text-neon hover:opacity-80">
+                Sub-job #{s.jobId} →
+              </Link>
+              <span className="text-muted-foreground">specialist</span>
+              <ExplorerLink href={addressUrl(s.specialist)}>{shortAddress(s.specialist)}</ExplorerLink>
+              <Badge variant="secondary" className="rounded-md bg-surface-2 text-[11px] font-normal text-cream">
+                {s.budgetUsdc} USDC
+              </Badge>
+            </div>
+            <p className="max-w-[75ch] text-[12px] leading-relaxed text-muted-foreground">{s.part}</p>
+            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+              {s.fundedTx ? <ExplorerLink href={s.fundedTx}>prime funded it</ExplorerLink> : null}
+              {s.settledTx ? <ExplorerLink href={s.settledTx}>specialist paid</ExplorerLink> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   )
 }
 

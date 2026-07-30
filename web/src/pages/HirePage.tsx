@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils'
 // typed one would create a job the live cloud worker deliberately skips (or
 // mis-routes), leaving their escrow locked until the expiry refund — so the
 // hire input strips them before the job is created, and says so.
-const RESERVED_MARKERS = /\[\s*(JUDGED|LAZY|BAD|TERMS\b[^\]]*|COLLATERAL\b[^\]]*)\s*\]/gi
+const RESERVED_MARKERS = /\[\s*(JUDGED|LAZY|BAD|TERMS\b[^\]]*|COLLATERAL\b[^\]]*|SUBCONTRACT\b[^\]]*)\s*\]/gi
 
 export function stripReservedMarkers(text: string): { clean: string; found: string[] } {
   const found = Array.from(text.matchAll(RESERVED_MARKERS)).map((m) => m[0])

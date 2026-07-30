@@ -25,6 +25,9 @@ app.get('/deliverable/:jobId', (c) => {
     submittedTx: txUrl(rec.submittedTx),
     verdict: rec.verdict ? { ...rec.verdict, settleTx: txUrl(rec.verdict.settleTx) } : null,
     appeal: rec.appeal ? { ...rec.appeal, attestTx: txUrl(rec.appeal.attestTx) } : null,
+    subcontracts: rec.subcontracts
+      ? rec.subcontracts.map((s) => ({ ...s, fundedTx: txUrl(s.fundedTx), settledTx: txUrl(s.settledTx) }))
+      : null,
     output: rec.output,
   })
 })

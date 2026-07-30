@@ -40,6 +40,18 @@ export interface AppealRecord {
   resolvedAt: number
 }
 
+/** A part of a job the provider subcontracted to a specialist agent (Item 3).
+ * The sub-job is a native ERC-8183 job the prime agent funded from its balance;
+ * `jobId` links to it (and its onchain description links back via [SUBCONTRACT]). */
+export interface SubcontractRef {
+  jobId: string // the sub-job id (specialist = its provider)
+  specialist: string
+  part: string
+  budgetUsdc: string // what the prime paid the specialist
+  fundedTx?: string // prime funded the sub-job escrow, from its own balance
+  settledTx?: string // sub-job settled → specialist paid
+}
+
 export interface DeliverableRecord {
   jobId: string
   /** Absent = 'deterministic' (records written before judged jobs existed). */
@@ -56,6 +68,8 @@ export interface DeliverableRecord {
   verdict?: Verdict
   /** Second-arbiter appeal of the verdict, if one was filed. */
   appeal?: AppealRecord
+  /** Parts of this job delegated to specialist agents. */
+  subcontracts?: SubcontractRef[]
   createdAt: number
 }
 
@@ -83,6 +97,13 @@ export function setAppeal(jobId: string, appeal: AppealRecord): void {
   const rec = getDeliverable(jobId)
   if (!rec) return
   rec.appeal = appeal
+  saveDeliverable(rec)
+}
+
+export function addSubcontract(mainJobId: string, ref: SubcontractRef): void {
+  const rec = getDeliverable(mainJobId)
+  if (!rec) return
+  rec.subcontracts = [...(rec.subcontracts ?? []).filter((s) => s.jobId !== ref.jobId), ref]
   saveDeliverable(rec)
 }
 

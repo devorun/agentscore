@@ -16,7 +16,8 @@
     "circle:setup": "tsx src/circle-setup.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "demo:appeal": "tsx src/demo-appeal.ts"
+    "demo:appeal": "tsx src/demo-appeal.ts",
+    "demo:subcontract": "tsx src/demo-subcontract.ts"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.8.0",

@@ -93,7 +93,20 @@ export interface ApiDeliverable {
     settleTx: string | null
   } | null
   appeal?: ApiAppeal | null
+  subcontracts?: ApiSubcontract[] | null
   output: { address: string; balanceUsd: number; txCount: number; risk: 'low' | 'medium' | 'high' }[]
+}
+
+// A part of this job delegated to a specialist agent (Item 3). The sub-job is a
+// native ERC-8183 job the prime funded from its own balance; it links back here
+// via a [SUBCONTRACT main=#…] marker in its onchain description.
+export interface ApiSubcontract {
+  jobId: string
+  specialist: `0x${string}`
+  part: string
+  budgetUsdc: string
+  fundedTx: string | null
+  settledTx: string | null
 }
 
 // A second-arbiter appeal of a verdict (Item 2). `overturned` = result differs

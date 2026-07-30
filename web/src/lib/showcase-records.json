@@ -266,5 +266,236 @@
       "resolvedAt": 1785371467
     },
     "output": []
+  },
+  "160084": {
+    "jobId": "160084",
+    "kind": "deterministic",
+    "producedBy": "0x5eA81E8823E6e50c6D1A4a087fc93d58D40545cC",
+    "spec": "Deliver a full wallet-risk report: dedupe the dataset, risk-label every wallet, and summarize the high-risk cohort for a treasury operator.",
+    "inputRows": 18,
+    "outputRows": 15,
+    "outputHash": "0x3d1e24db3a1d79dd6f216e35ab02be69f7a48def93a9eb78a0f499cdd342b69f",
+    "memo": null,
+    "agentModel": null,
+    "submittedTx": "https://testnet.arcscan.app/tx/0x8396696dc4755bf8705f000b0e801661a361944d176d9edd0aeb61f893f6139a",
+    "verdict": {
+      "outcome": "approved",
+      "verifiedAt": 1785432471,
+      "settleTx": "https://testnet.arcscan.app/tx/0x5b9559ca8594ba2143022bed7add6b57c6b077d75f7ecb341f436c1a8f12af16"
+    },
+    "appeal": null,
+    "subcontracts": [
+      {
+        "jobId": "160085",
+        "specialist": "0xE4F6c412c40542e825D043B06977854335c9b67D",
+        "part": "Risk-label each wallet in the dataset (low/medium/high) — the risk-scoring slice of the report.",
+        "budgetUsdc": "2",
+        "fundedTx": "https://testnet.arcscan.app/tx/0x0d586a4b3ff2c783d910fa26e625385a354e375a4eaccf73dadc3ed32d42acbc",
+        "settledTx": "https://testnet.arcscan.app/tx/0x9b03157cbf5d05ca5b3ba6eb8c06cd4f23a98b06c4884a26fbd3a618bfb6f426"
+      }
+    ],
+    "output": [
+      {
+        "address": "0x1a2b3c4d5e6f70819293a4b5c6d7e8f901020304",
+        "balanceUsd": 245000,
+        "txCount": 1820,
+        "risk": "high"
+      },
+      {
+        "address": "0x2b3c4d5e6f7081920304a5b6c7d8e9f012131415",
+        "balanceUsd": 8200,
+        "txCount": 44,
+        "risk": "low"
+      },
+      {
+        "address": "0x3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f",
+        "balanceUsd": 156000,
+        "txCount": 610,
+        "risk": "high"
+      },
+      {
+        "address": "0x4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70",
+        "balanceUsd": 320,
+        "txCount": 7,
+        "risk": "low"
+      },
+      {
+        "address": "0x5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081",
+        "balanceUsd": 19500,
+        "txCount": 130,
+        "risk": "medium"
+      },
+      {
+        "address": "0x6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192",
+        "balanceUsd": 640,
+        "txCount": 210,
+        "risk": "medium"
+      },
+      {
+        "address": "0x708192a3b4c5d6e7f8091a2b3c4d5e6f70819293",
+        "balanceUsd": 4100,
+        "txCount": 22,
+        "risk": "low"
+      },
+      {
+        "address": "0x8192a3b4c5d6e7f8091a2b3c4d5e6f7081929304",
+        "balanceUsd": 112000,
+        "txCount": 90,
+        "risk": "high"
+      },
+      {
+        "address": "0x92a3b4c5d6e7f8091a2b3c4d5e6f708192930405",
+        "balanceUsd": 75,
+        "txCount": 3,
+        "risk": "low"
+      },
+      {
+        "address": "0xa3b4c5d6e7f8091a2b3c4d5e6f70819293040516",
+        "balanceUsd": 33000,
+        "txCount": 480,
+        "risk": "medium"
+      },
+      {
+        "address": "0xb4c5d6e7f8091a2b3c4d5e6f7081929304051617",
+        "balanceUsd": 2200,
+        "txCount": 1450,
+        "risk": "high"
+      },
+      {
+        "address": "0xc5d6e7f8091a2b3c4d5e6f708192930405161718",
+        "balanceUsd": 9800,
+        "txCount": 61,
+        "risk": "low"
+      },
+      {
+        "address": "0xd6e7f8091a2b3c4d5e6f70819293040516171819",
+        "balanceUsd": 410000,
+        "txCount": 12,
+        "risk": "high"
+      },
+      {
+        "address": "0xe7f8091a2b3c4d5e6f7081929304051617181920",
+        "balanceUsd": 1500,
+        "txCount": 18,
+        "risk": "low"
+      },
+      {
+        "address": "0xf8091a2b3c4d5e6f708192930405161718192021",
+        "balanceUsd": 88000,
+        "txCount": 305,
+        "risk": "medium"
+      }
+    ]
+  },
+  "160085": {
+    "jobId": "160085",
+    "kind": "deterministic",
+    "producedBy": "0xE4F6c412c40542e825D043B06977854335c9b67D",
+    "spec": "Risk-label each wallet in the dataset (low/medium/high) — the risk-scoring slice of the report.",
+    "inputRows": 18,
+    "outputRows": 15,
+    "outputHash": "0x3d1e24db3a1d79dd6f216e35ab02be69f7a48def93a9eb78a0f499cdd342b69f",
+    "memo": null,
+    "agentModel": null,
+    "submittedTx": "https://testnet.arcscan.app/tx/0x9f96c35d8d4eefad2a5327259a60b15ab17c03b183d00e14dc9051dc966c85db",
+    "verdict": {
+      "outcome": "approved",
+      "verifiedAt": 1785432461,
+      "settleTx": "https://testnet.arcscan.app/tx/0x9b03157cbf5d05ca5b3ba6eb8c06cd4f23a98b06c4884a26fbd3a618bfb6f426"
+    },
+    "appeal": null,
+    "subcontracts": null,
+    "output": [
+      {
+        "address": "0x1a2b3c4d5e6f70819293a4b5c6d7e8f901020304",
+        "balanceUsd": 245000,
+        "txCount": 1820,
+        "risk": "high"
+      },
+      {
+        "address": "0x2b3c4d5e6f7081920304a5b6c7d8e9f012131415",
+        "balanceUsd": 8200,
+        "txCount": 44,
+        "risk": "low"
+      },
+      {
+        "address": "0x3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f",
+        "balanceUsd": 156000,
+        "txCount": 610,
+        "risk": "high"
+      },
+      {
+        "address": "0x4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70",
+        "balanceUsd": 320,
+        "txCount": 7,
+        "risk": "low"
+      },
+      {
+        "address": "0x5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081",
+        "balanceUsd": 19500,
+        "txCount": 130,
+        "risk": "medium"
+      },
+      {
+        "address": "0x6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192",
+        "balanceUsd": 640,
+        "txCount": 210,
+        "risk": "medium"
+      },
+      {
+        "address": "0x708192a3b4c5d6e7f8091a2b3c4d5e6f70819293",
+        "balanceUsd": 4100,
+        "txCount": 22,
+        "risk": "low"
+      },
+      {
+        "address": "0x8192a3b4c5d6e7f8091a2b3c4d5e6f7081929304",
+        "balanceUsd": 112000,
+        "txCount": 90,
+        "risk": "high"
+      },
+      {
+        "address": "0x92a3b4c5d6e7f8091a2b3c4d5e6f708192930405",
+        "balanceUsd": 75,
+        "txCount": 3,
+        "risk": "low"
+      },
+      {
+        "address": "0xa3b4c5d6e7f8091a2b3c4d5e6f70819293040516",
+        "balanceUsd": 33000,
+        "txCount": 480,
+        "risk": "medium"
+      },
+      {
+        "address": "0xb4c5d6e7f8091a2b3c4d5e6f7081929304051617",
+        "balanceUsd": 2200,
+        "txCount": 1450,
+        "risk": "high"
+      },
+      {
+        "address": "0xc5d6e7f8091a2b3c4d5e6f708192930405161718",
+        "balanceUsd": 9800,
+        "txCount": 61,
+        "risk": "low"
+      },
+      {
+        "address": "0xd6e7f8091a2b3c4d5e6f70819293040516171819",
+        "balanceUsd": 410000,
+        "txCount": 12,
+        "risk": "high"
+      },
+      {
+        "address": "0xe7f8091a2b3c4d5e6f7081929304051617181920",
+        "balanceUsd": 1500,
+        "txCount": 18,
+        "risk": "low"
+      },
+      {
+        "address": "0xf8091a2b3c4d5e6f708192930405161718192021",
+        "balanceUsd": 88000,
+        "txCount": 305,
+        "risk": "medium"
+      }
+    ]
   }
 }
