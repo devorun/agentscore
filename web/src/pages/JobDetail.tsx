@@ -2,15 +2,15 @@ import { Link, useParams } from 'react-router-dom'
 import { useReadContract } from 'wagmi'
 import { ArrowRight, ArrowUpRight, Check } from 'lucide-react'
 import { findSeedJob, type SeedJob } from '@/lib/jobs'
-import { erc8183Abi } from '@/lib/abi'
-import { ARBITER_ADDRESS, ERC8183_ADDRESS, JobStatus, type JobStatusValue } from '@/lib/config'
+import { appealsAbi, erc8183Abi } from '@/lib/abi'
+import { APPEALS_ADDRESS, ARBITER_ADDRESS, ERC8183_ADDRESS, JobStatus, type JobStatusValue } from '@/lib/config'
 import { addressUrl, formatUsdc, shortAddress, txUrl } from '@/lib/format'
 import { useJobEvents, type JobEvent } from '@/hooks/useJobEvents'
 import { useDeliverable } from '@/hooks/useDeliverable'
 import { useNanopay } from '@/hooks/useNanopay'
 import { isCollateralJob, parseTermsMarker } from '@/lib/credit'
 import { showcaseDeliverable } from '@/lib/showcase'
-import type { ApiDeliverable, ApiNanopay } from '@/lib/api'
+import type { ApiAppeal, ApiDeliverable, ApiNanopay } from '@/lib/api'
 import { AgentMindTerminal, type TermLine } from '@/components/AgentMindTerminal'
 import { StatusBadge, SkillBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
@@ -300,8 +300,136 @@ function RealJobDetail({ jobId }: { jobId: bigint }) {
           <DeliverablePanel data={record} />
         )
       ) : null}
+      {record?.appeal ? <AppealPanel jobId={jobId} appeal={record.appeal} /> : null}
       {nanopay.data ? <NanopaymentsPanel data={nanopay.data} /> : null}
     </div>
+  )
+}
+
+// A second-arbiter appeal of a verdict. The outcome + reasonHash are read
+// straight from AgentScoreAppeals; the browser recomputes keccak(reasoning) and
+// matches it, so the shown reasoning is verifiably the attested one.
+function AppealPanel({ jobId, appeal }: { jobId: bigint; appeal: ApiAppeal }) {
+  const { data: onchain } = useReadContract({
+    address: APPEALS_ADDRESS,
+    abi: appealsAbi,
+    functionName: 'getAppeal',
+    args: [jobId],
+    query: { retry: false },
+  })
+  const onchainReasonHash = onchain ? (onchain as { reasonHash: string }).reasonHash : undefined
+  const computedHash = keccak256(toHex(appeal.reasoning))
+  const hashState: 'match' | 'mismatch' | 'pending' = onchainReasonHash
+    ? computedHash.toLowerCase() === onchainReasonHash.toLowerCase()
+      ? 'match'
+      : 'mismatch'
+    : 'pending'
+  const overturned = appeal.overturned
+
+  return (
+    <Card className={cn('flex flex-col gap-4 rounded-xl border p-5', overturned ? 'border-success/40 bg-success/5' : 'border-border bg-card')}>
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Appeal — second arbiter</h2>
+        <Badge
+          variant="outline"
+          className={cn(
+            'rounded-md text-[11px] font-medium tracking-wide',
+            overturned ? 'border-success/30 bg-success/10 text-success' : 'border-muted-foreground/30 bg-surface-2 text-muted-foreground',
+          )}
+        >
+          {overturned ? 'OVERTURNED' : 'UPHELD'}
+        </Badge>
+        {appeal.appealModel ? (
+          <Badge variant="outline" className="rounded-md border-neon/30 bg-neon/10 text-[11px] font-normal text-neon">
+            {appeal.appealModel} — independent model family
+          </Badge>
+        ) : null}
+      </div>
+
+      <p className="max-w-[75ch] text-[13px] leading-relaxed text-muted-foreground">
+        The losing party contested the verdict. A <span className="text-foreground">second, independent arbiter on a different
+        model family</span> re-adjudicated from the onchain record and the stored deliverable — it never re-runs the work, and
+        never defers to the first arbiter.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <span className="rounded-md border border-danger/30 bg-danger/10 px-2 py-0.5 text-danger">First verdict: {appeal.original}</span>
+        <span className="text-muted-foreground">→</span>
+        <span
+          className={cn(
+            'rounded-md border px-2 py-0.5',
+            appeal.result === 'approved' ? 'border-success/30 bg-success/10 text-success' : 'border-danger/30 bg-danger/10 text-danger',
+          )}
+        >
+          Appeal result: {appeal.result}
+        </span>
+        {appeal.attestTx ? <ExplorerLink href={appeal.attestTx}>onchain attestation</ExplorerLink> : null}
+      </div>
+
+      {appeal.rubric ? (
+        <div className="overflow-hidden rounded-lg border border-border">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[440px] text-[13px]">
+              <thead>
+                <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                  <th className="px-3 py-2 text-left font-medium">Criterion</th>
+                  <th className="px-3 py-2 text-left font-medium">Score</th>
+                  <th className="px-3 py-2 text-left font-medium">Comment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {appeal.rubric.map((r) => (
+                  <tr key={r.criterion} className="border-b border-border last:border-0">
+                    <td className="px-3 py-2 text-foreground">{r.criterion}</td>
+                    <td className={cn('tabular px-3 py-2 font-semibold', r.score >= Math.ceil(r.max * 0.6) ? 'text-success' : 'text-danger')}>
+                      {r.score}/{r.max}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{r.comment}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-2">
+        <span className="text-[12px] uppercase tracking-wider text-muted-foreground/70">Appeal reasoning (attested onchain)</span>
+        <p className="max-w-[75ch] rounded-lg border-l-2 border-neon/50 bg-surface-1 px-4 py-3 text-[13px] leading-relaxed text-foreground">{appeal.reasoning}</p>
+        <div
+          className={cn(
+            'flex flex-col gap-2 rounded-lg border p-3',
+            hashState === 'match' ? 'border-success/40 bg-success/10' : hashState === 'mismatch' ? 'border-danger/40 bg-danger/10' : 'border-border bg-surface-1',
+          )}
+        >
+          <span className={cn('text-[13px] font-semibold', hashState === 'match' ? 'text-success' : hashState === 'mismatch' ? 'text-danger' : 'text-muted-foreground')}>
+            {hashState === 'match'
+              ? '✓ Verified in your browser against the appeals contract'
+              : hashState === 'mismatch'
+                ? '✗ Integrity check failed — reasoning does not match the onchain appeal'
+                : 'Verifying against the appeals contract…'}
+          </span>
+          {onchainReasonHash ? (
+            <div className="grid grid-cols-1 gap-1 text-[12px] sm:grid-cols-[auto_1fr]">
+              <span className="text-muted-foreground/70">keccak(reasoning) computed here</span>
+              <span className="tabular break-all text-foreground">{computedHash}</span>
+              <span className="text-muted-foreground/70">reason recorded onchain</span>
+              <span className="tabular break-all text-foreground">{onchainReasonHash}</span>
+            </div>
+          ) : null}
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            The appeal arbiter committed the keccak of its written reasoning onchain in AgentScoreAppeals. Your browser hashes
+            the text above and compares — so the reasoning cannot have been edited after the fact.
+          </p>
+        </div>
+      </div>
+
+      <p className="text-[12px] leading-relaxed text-muted-foreground">
+        The ERC-8183 escrow settlement is final and is <span className="text-foreground">not</span> reversed; the appeal
+        corrects the <span className="text-foreground">reputation record</span>
+        {overturned ? ' — an overturned rejection no longer counts against the agent’s score.' : ' — an upheld rejection stands.'}
+      </p>
+    </Card>
   )
 }
 

@@ -54,7 +54,7 @@ export interface JudgeResult {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** One chat call. Retries 429/5xx with backoff, then throws — loud by design. */
-async function chat(model: string, prompt: string, maxTokens: number): Promise<string> {
+export async function chat(model: string, prompt: string, maxTokens: number): Promise<string> {
   const key = process.env.LLM_API_KEY
   if (!key) throw new Error('LLM_API_KEY missing — judged jobs require the free-tier key; refusing to fabricate output')
   let lastError = ''

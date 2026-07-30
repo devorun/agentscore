@@ -23,6 +23,23 @@ export interface Verdict {
   settleTx?: string
 }
 
+/** A second-arbiter appeal outcome, recorded onchain in AgentScoreAppeals and
+ * mirrored here for the job page (reasoning + rubric). `overturned` = result
+ * differs from the original verdict. */
+export interface AppealRecord {
+  filedBy: string // the losing party who contested (agent for a rejection, client for an approval)
+  appealArbiter: string
+  appealModel: string
+  original: 'approved' | 'rejected'
+  result: 'approved' | 'rejected'
+  overturned: boolean
+  rubric?: RubricItem[]
+  reasoning: string
+  reasonHash: string
+  attestTx?: string
+  resolvedAt: number
+}
+
 export interface DeliverableRecord {
   jobId: string
   /** Absent = 'deterministic' (records written before judged jobs existed). */
@@ -37,6 +54,8 @@ export interface DeliverableRecord {
   outputHash: string
   submittedTx?: string
   verdict?: Verdict
+  /** Second-arbiter appeal of the verdict, if one was filed. */
+  appeal?: AppealRecord
   createdAt: number
 }
 
@@ -57,6 +76,13 @@ export function setVerdict(jobId: string, verdict: Verdict): void {
   const rec = getDeliverable(jobId)
   if (!rec) return
   rec.verdict = verdict
+  saveDeliverable(rec)
+}
+
+export function setAppeal(jobId: string, appeal: AppealRecord): void {
+  const rec = getDeliverable(jobId)
+  if (!rec) return
+  rec.appeal = appeal
   saveDeliverable(rec)
 }
 

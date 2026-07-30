@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { type Address, getAddress, keccak256, parseUnits, toHex } from 'viem'
 import { publicClient, readChunked } from '../lib/client'
-import { erc8183Abi, registryAbi } from '../lib/abi'
-import { API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
+import { appealsAbi, erc8183Abi, registryAbi } from '../lib/abi'
+import { APPEALS_ADDRESS, API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
 import { apiAgent, STATUS_INDEX, txHashFromUrl } from '../lib/api'
 import { fetchLogsByTopic, padAddressTopic } from '../lib/explorer'
 import { isCollateralJob } from '../lib/credit'
@@ -47,6 +47,8 @@ export interface AgentData {
   address: Address
   metrics: AgentMetrics
   breakdown: ScoreBreakdown
+  /** Rejections overturned by a second-arbiter appeal — excluded from `rejected`. */
+  overturnedRejections: number
   jobs: JobRow[]
   truncated: boolean
   profile: RegistryProfile
@@ -88,7 +90,7 @@ async function loadAgentData(address: Address): Promise<AgentData> {
         createdAt: j.createdAt,
         createdTx: txHashFromUrl(j.tx),
       }))
-      return { address, metrics, breakdown: api.breakdown, jobs, truncated: api.truncated, profile, verdicts }
+      return { address, metrics, breakdown: api.breakdown, overturnedRejections: api.metrics.overturnedRejections ?? 0, jobs, truncated: api.truncated, profile, verdicts }
     } catch {
       // API down — fall through to direct chain reads.
     }
@@ -149,8 +151,26 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   )
   const earnings6 = paymentLogs.reduce((sum, log) => sum + decodeAmount(log.data), 0n)
 
+  // Rejections overturned by a second-arbiter appeal (AgentScoreAppeals) are not
+  // penalized. A failed read leaves the set empty, so scoring falls back exactly.
+  const rejectedIds = jobs.filter((j) => j.status === JobStatus.Rejected).map((j) => j.jobId)
+  const overturnedSet = new Set<string>()
+  if (APPEALS_ADDRESS && rejectedIds.length > 0) {
+    try {
+      const flags = await readChunked<boolean>(
+        rejectedIds.map((jobId) => ({ address: APPEALS_ADDRESS, abi: appealsAbi, functionName: 'isOverturned' as const, args: [jobId] })),
+      )
+      rejectedIds.forEach((jobId, i) => {
+        if (flags[i]) overturnedSet.add(jobId.toString())
+      })
+    } catch {
+      /* appeals read failed — score exactly as before */
+    }
+  }
+
   let completed = 0
   let rejected = 0
+  let overturnedRejections = 0
   let expired = 0
   let expiredUnfunded = 0
   let settled6 = 0n
@@ -166,7 +186,8 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
         completions.push({ client: job.client, budget6: job.budget6 })
         break
       case JobStatus.Rejected:
-        rejected += 1
+        if (overturnedSet.has(job.jobId.toString())) overturnedRejections += 1
+        else rejected += 1
         break
       case JobStatus.Expired:
         expired += 1
@@ -188,7 +209,7 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   const profile = await loadRegistryProfile(address)
   const verdicts = await loadVerdicts(address)
 
-  return { address, metrics, breakdown: computeScore(metrics, completions), jobs, truncated, profile, verdicts }
+  return { address, metrics, breakdown: computeScore(metrics, completions), overturnedRejections, jobs, truncated, profile, verdicts }
 }
 
 async function loadRegistryProfile(address: Address): Promise<RegistryProfile> {

@@ -26,3 +26,13 @@ export const registryAbi = parseAbi([
   'function verdictCount(address agent) view returns (uint256)',
   'function jobAttested(uint256 jobId) view returns (bool)',
 ])
+
+// AgentScoreAppeals — second-arbiter appeal outcomes (Outcome enum: 0=Approved, 1=Rejected).
+export const appealsAbi = parseAbi([
+  'event AppealResolved(uint256 indexed jobId, address indexed agent, uint8 original, uint8 result, bool overturned, bytes32 reasonHash, address indexed appealArbiter)',
+  'function resolveAppeal(uint256 jobId, address agent, uint8 original, uint8 result, bytes32 reasonHash)',
+  'function getAppeal(uint256 jobId) view returns ((uint256 jobId, address agent, uint8 original, uint8 result, bytes32 reasonHash, address appealArbiter, uint64 resolvedAt))',
+  'function isOverturned(uint256 jobId) view returns (bool)',
+  'function jobAppealed(uint256 jobId) view returns (bool)',
+  'function appealCount() view returns (uint256)',
+])

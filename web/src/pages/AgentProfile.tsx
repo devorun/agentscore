@@ -101,7 +101,7 @@ export function AgentProfile() {
 }
 
 function ProfileBody({ data }: { data: AgentData }) {
-  const { metrics, breakdown, jobs, profile, verdicts, truncated } = data
+  const { metrics, breakdown, overturnedRejections, jobs, profile, verdicts, truncated } = data
   const rate = completionRate(metrics)
 
   return (
@@ -151,6 +151,11 @@ function ProfileBody({ data }: { data: AgentData }) {
           <Metric label="Disputes" value={metrics.rejected.toString()} danger={metrics.rejected > 0} />
           <Metric label="Settled value" value={formatUsdc(metrics.settled6)} />
         </div>
+        {overturnedRejections > 0 ? (
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            {overturnedRejections} rejection{overturnedRejections === 1 ? '' : 's'} overturned by a second-arbiter appeal — not counted against the score.
+          </p>
+        ) : null}
       </div>
 
       <CreditTermsCard score={breakdown.score} />

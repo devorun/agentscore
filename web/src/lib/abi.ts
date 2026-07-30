@@ -50,3 +50,10 @@ export const registryAbi = parseAbi([
   'function agentCount() view returns (uint256)',
   'function isRegistered(address agent) view returns (bool)',
 ])
+
+// AgentScoreAppeals — read a job's onchain appeal (Outcome: 0=Approved, 1=Rejected).
+export const appealsAbi = parseAbi([
+  'function getAppeal(uint256 jobId) view returns ((uint256 jobId, address agent, uint8 original, uint8 result, bytes32 reasonHash, address appealArbiter, uint64 resolvedAt))',
+  'function jobAppealed(uint256 jobId) view returns (bool)',
+  'function isOverturned(uint256 jobId) view returns (bool)',
+])

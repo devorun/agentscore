@@ -62,6 +62,7 @@ app.get('/agent/:address', async (c) => {
         totalJobs: r.metrics.totalJobs,
         completed: r.metrics.completed,
         rejected: r.metrics.rejected,
+        overturnedRejections: r.overturnedRejections,
         expired: r.metrics.expired,
         lifetimeEarningsUsdc: usdc(r.metrics.earnings6),
         settledValueUsdc: usdc(r.metrics.settled6),

@@ -4,6 +4,7 @@ import { erc8183Abi } from './abi.js'
 import { ERC8183_ADDRESS, JobStatus, type JobStatusValue } from './config.js'
 import { fetchLogsByTopic, padAddressTopic } from './explorer.js'
 import { isCollateralJob } from './credit.js'
+import { fetchOverturnedRejections } from './appeal.js'
 import { completionRate, computeScore, type AgentMetrics, type CompletionRef, type ScoreBreakdown } from './score.js'
 
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
@@ -27,6 +28,8 @@ export interface AgentReputation {
   breakdown: ScoreBreakdown
   metrics: AgentMetrics
   completionRate: number | null
+  /** Rejections overturned by a second-arbiter appeal — no longer penalized. */
+  overturnedRejections: number
   jobs: JobRow[]
   truncated: boolean
 }
@@ -76,8 +79,14 @@ export async function computeReputation(rawAddress: string): Promise<AgentReputa
   )
   const earnings6 = paymentLogs.reduce((sum, l) => sum + BigInt(l.data.slice(0, 66)), 0n)
 
+  // Rejections this agent had overturned by a second-arbiter appeal — recorded
+  // onchain in AgentScoreAppeals. A failed read yields an empty set, so scoring
+  // falls back to exactly its previous behavior (purely additive fold).
+  const overturned = await fetchOverturnedRejections(address)
+
   let completed = 0
   let rejected = 0
+  let overturnedRejections = 0
   let expired = 0
   let expiredUnfunded = 0
   let settled6 = 0n
@@ -92,7 +101,10 @@ export async function computeReputation(rawAddress: string): Promise<AgentReputa
       settled6 += job.budget6
       completions.push({ client: job.client, budget6: job.budget6 })
     } else if (job.status === JobStatus.Rejected) {
-      rejected += 1
+      // An overturned rejection must not keep punishing the agent: the escrow is
+      // final, but the reputation record is corrected — the −20 is not applied.
+      if (overturned.has(job.jobId.toString())) overturnedRejections += 1
+      else rejected += 1
     } else if (job.status === JobStatus.Expired) {
       expired += 1
       if (job.budget6 === 0n) expiredUnfunded += 1
@@ -101,5 +113,5 @@ export async function computeReputation(rawAddress: string): Promise<AgentReputa
 
   const metrics: AgentMetrics = { totalJobs: jobs.length, completed, rejected, expired, expiredUnfunded, settled6, earnings6 }
   const breakdown = computeScore(metrics, completions)
-  return { address, score: breakdown.score, breakdown, metrics, completionRate: completionRate(metrics), jobs, truncated }
+  return { address, score: breakdown.score, breakdown, metrics, completionRate: completionRate(metrics), overturnedRejections, jobs, truncated }
 }

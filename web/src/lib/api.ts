@@ -36,7 +36,7 @@ export interface ApiAgent {
     distinctClients: number
   }
   completionRate: number | null
-  metrics: { totalJobs: number; completed: number; rejected: number; expired: number; lifetimeEarningsUsdc: string; settledValueUsdc: string }
+  metrics: { totalJobs: number; completed: number; rejected: number; overturnedRejections?: number; expired: number; lifetimeEarningsUsdc: string; settledValueUsdc: string }
   jobs: {
     jobId: string
     status: string
@@ -92,7 +92,24 @@ export interface ApiDeliverable {
     deliverableHashMatch?: boolean
     settleTx: string | null
   } | null
+  appeal?: ApiAppeal | null
   output: { address: string; balanceUsd: number; txCount: number; risk: 'low' | 'medium' | 'high' }[]
+}
+
+// A second-arbiter appeal of a verdict (Item 2). `overturned` = result differs
+// from the original. Attested onchain in AgentScoreAppeals.
+export interface ApiAppeal {
+  filedBy: `0x${string}`
+  appealArbiter: string
+  appealModel: string
+  original: 'approved' | 'rejected'
+  result: 'approved' | 'rejected'
+  overturned: boolean
+  rubric?: ApiRubricItem[]
+  reasoning: string
+  reasonHash: string
+  attestTx: string | null
+  resolvedAt: number
 }
 
 export interface ApiNanopayRow {

@@ -13,6 +13,11 @@ export const REGISTRY_ADDRESS = (process.env.REGISTRY_ADDRESS ||
 export const ARBITER_ADDRESS = '0x5d474e5125D7ee1a63EE2f2444a88e2a518683E9' as const
 export const LIVE_AGENT_ADDRESS = '0x939ABdD89fE9C5aAC54615f56c50901acf5E6918' as const
 
+// Appeals (Item 2): a second-arbiter appeal outcome is recorded here, NOT on the
+// registry (whose verdicts are final and one-per-job). Additive and independent.
+export const APPEALS_ADDRESS = (process.env.APPEALS_ADDRESS ||
+  '0x3DD2e1410fF24007C98D8E7B12796458697733ed') as `0x${string}`
+
 export const arcTestnet = defineChain({
   id: 5042002,
   name: 'Arc Testnet',

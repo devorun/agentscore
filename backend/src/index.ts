@@ -24,6 +24,7 @@ app.get('/deliverable/:jobId', (c) => {
     agentModel: rec.agentModel ?? null,
     submittedTx: txUrl(rec.submittedTx),
     verdict: rec.verdict ? { ...rec.verdict, settleTx: txUrl(rec.verdict.settleTx) } : null,
+    appeal: rec.appeal ? { ...rec.appeal, attestTx: txUrl(rec.appeal.attestTx) } : null,
     output: rec.output,
   })
 })

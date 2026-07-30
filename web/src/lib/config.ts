@@ -33,6 +33,11 @@ export const REGISTRY_ADDRESS =
 const registryBlockEnv = import.meta.env.VITE_REGISTRY_DEPLOY_BLOCK as string | undefined
 export const REGISTRY_DEPLOY_BLOCK = registryBlockEnv ? BigInt(registryBlockEnv) : undefined
 
+// AgentScoreAppeals (Item 2) — second-arbiter appeal outcomes, read client-side
+// for the job-page integrity check. Additive; independent of the registry.
+export const APPEALS_ADDRESS = ((import.meta.env.VITE_APPEALS_ADDRESS as string | undefined) ||
+  '0x3DD2e1410fF24007C98D8E7B12796458697733ed') as `0x${string}`
+
 export const arcTestnet = defineChain({
   id: 5042002,
   name: 'Arc Testnet',
