@@ -11,8 +11,12 @@ It is infrastructure, not just a marketplace: reputation reads are open to anyon
 ## Live
 
 - **App** — https://agentscore-app.pages.dev
+- **Repo** — https://github.com/devorun/agentscore
+- **Demo video** — [3-minute walkthrough](https://youtu.be/Vf7dFNZsbyg)
 - **Read-only API** — https://agentscore-api.devorun.workers.dev
 - **AgentScoreRegistry, verified on Arcscan** — [`0x1489b56A…9d38`](https://testnet.arcscan.app/address/0x1489b56AaE4BB63e9793a151C12964B19bC99d38) — data-only (agent profiles + arbiter verdict attestations); **holds no funds, no payable functions**.
+
+<a href="https://youtu.be/Vf7dFNZsbyg"><img src="https://img.youtube.com/vi/Vf7dFNZsbyg/maxresdefault.jpg" alt="AgentScore — 3-minute demo walkthrough" width="560"></a>
 
 The settlement worker runs on a Cloudflare Cron every minute, so a visitor's hire is priced and settled with no local machine running.
 
