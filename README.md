@@ -42,7 +42,7 @@ AgentScore runs as three layers:
 
 ## What's here
 
-- **Reputation engine** — indexes the full ERC-8183 job history from Arc Testnet and computes a verifiable 0–100 score per agent (completion rate, lifetime USDC earnings, disputes, volume). Settlements are **time-decayed** — approvals with a 90-day half-life, rejections with a 180-day half-life — pulling a dormant agent back toward the neutral 50, and every score is computed at a reference block, so it is reproducible (`GET /agent/:address?block=N`). One scoring module (`backend/src/lib/score.ts`) serves the API, the settlement worker's credit-terms gate and the web app.
+- **Reputation engine** — indexes the full ERC-8183 job history from Arc Testnet and computes a verifiable 0–100 score per agent (completion rate, lifetime USDC earnings, disputes, volume). Settlements are **time-decayed** — approvals with a 90-day half-life, rejections with a 180-day half-life — pulling a dormant agent back toward the neutral 50, and every score is computed at a reference block, so it is reproducible (`GET /agent/:address?block=N`). History reaches the chain tip: the explorer serves deep history, and anything it has not indexed yet is read straight from chain. One scoring module (`backend/src/lib/score.ts`) serves the API, the settlement worker's credit-terms gate and the web app.
 - **AgentScoreRegistry** (`contracts/`) — our own Solidity for agent profiles + arbiter verdict attestations. **Holds no funds, has no payable functions, transfers no tokens** — all escrow stays in the ERC-8183 reference contract. This is a deliberate security posture.
 - **Marketplace dApp** (`web/`) — a premium dark/light UI: agent showcase, hire → create-job → fund-escrow flow, marketplace of open bounties, dashboard, and a job-detail view with an "Agent's Mind" terminal that shows the autonomous loop end to end.
 - **Arbiter** (`arbiter/`) — a local, testnet-only evaluator (private key gitignored) that watches jobs, verifies deliverables, and settles.
@@ -116,6 +116,7 @@ Honest, build-derived feedback on each Circle product we used — what worked, w
 ### Arc Testnet & hosting notes
 
 - **`eth_getLogs` limits vary by RPC.** dRPC's free plan now rejects log queries at any range, and the official RPC serves 5,000-block ranges but throttles bursts — so the settlement worker queries logs on the official RPC in a few sequential 5,000-block pages, with no in-tick retries, backed by a counter tail of the newest jobs.
+- **The Arcscan explorer API** now redirects to `explorer.testnet.arc.io`, allows ~10 requests per window per IP without a key, and its index can trail the chain by hours — so it is only an accelerator for deep history; the reputation API backfills everything past its index from chain logs.
 - **The official Arc RPC (`rpc.testnet.arc.network`) rate-limits hard** under load (we measured ~3 of 24 requests OK in a burst, the rest HTTP 429), which broke live flows and the Gateway SDK's receipt reads. We moved reads, the worker, and the wallet params to **dRPC** (`arc-testnet.drpc.org`), which handled the load (log queries excepted, above).
 - **The free-tier Cloudflare Workers CPU budget (10 ms)** shaped the settlement worker: it is stateless (re-derives from chain each tick), reads over plain `fetch` with one hand-encoded Multicall3 call, never touches key material on idle ticks (a signer with a small secp256k1 table is built only when a transaction is sent), sends receipt-free with local nonces, and caps at **2 transactions per tick**.
 
@@ -180,7 +181,7 @@ forge build
 ```
 cd backend
 npm install
-npm test              # 54 tests
+npm test              # 59 tests
 npm start             # reputation API + always-on agent/arbiter worker (port 8787)
 npm run api           # read-only API only (no signing worker) — use this when a cloud worker signs
 ```

@@ -1,6 +1,10 @@
 import { defineChain } from 'viem'
 
 export const ARC_RPC = process.env.ARC_RPC || 'https://arc-testnet.drpc.org'
+// eth_getLogs endpoint: dRPC's free plan serves no log queries.
+export const LOGS_RPC = process.env.LOGS_RPC || 'https://rpc.testnet.arc.network'
+// Plain reads: dRPC first, the official RPC as fallback.
+export const READ_RPCS = [ARC_RPC, LOGS_RPC] as const
 export const EXPLORER_URL = 'https://testnet.arcscan.app'
 
 export const ERC8183_ADDRESS = '0x0747EEf0706327138c69792bF28Cd525089e4583' as const

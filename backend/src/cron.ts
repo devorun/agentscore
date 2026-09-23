@@ -19,12 +19,13 @@
 // keys, never in the repo). Never run the local signing worker (`npm start`)
 // while this cron is scheduled — use `npm run api` locally instead.
 import { secp256k1 } from '@noble/curves/secp256k1'
-import { createPublicClient, encodeFunctionData, getAddress, hexToString, http, keccak256, toHex, type Address, type Hex } from 'viem'
+import { createPublicClient, encodeFunctionData, getAddress, http, keccak256, toHex, type Address, type Hex } from 'viem'
 import { signTransaction } from 'viem/accounts'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
 import { ADVANCE_PCT, COLLATERAL_PCT, creditTermsEarned, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
 import { enrich, enrichTampered, hashOutput, verify, type WalletRow } from './lib/enrichment.js'
 import { isJudgedJob } from './lib/judged.js'
+import { aggregate3, decodeJob, MULTICALL3, rpc, rpcOnce, selector, uint, word, type JobView } from './lib/lean.js'
 import { computeReputation } from './lib/reputation.js'
 import inputRows from '../data/input/wallets.json'
 
@@ -44,7 +45,6 @@ interface Env {
 const ERC8183 = '0x0747EEf0706327138c69792bF28Cd525089e4583' as const
 const REGISTRY = '0x1489b56AaE4BB63e9793a151C12964B19bC99d38' as const
 const USDC = '0x3600000000000000000000000000000000000000' as const
-const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11' as const
 const DEFAULT_AGENT = '0x939ABdD89fE9C5aAC54615f56c50901acf5E6918' as const
 const DEFAULT_ARBITER = '0x5d474e5125D7ee1a63EE2f2444a88e2a518683E9' as const
 const DEFAULT_LOGS_RPC = 'https://rpc.testnet.arc.network'
@@ -61,13 +61,13 @@ const DEFAULT_DISCOVERY_PAGES = 3
 const TAIL_JOBS = 20n // counter-based safety net for the newest jobs
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
 const JOB_SUBMITTED_TOPIC = keccak256(toHex('JobSubmitted(uint256,address,bytes32)'))
+const JOB_COMPLETED_TOPIC = keccak256(toHex('JobCompleted(uint256,address,bytes32)'))
+const JOB_REJECTED_TOPIC = keccak256(toHex('JobRejected(uint256,address,bytes32)'))
 const TRANSFER_TOPIC = keccak256(toHex('Transfer(address,address,uint256)'))
 // Function selectors, computed once at startup (not per tick).
-const selector = (signature: string) => keccak256(toHex(signature)).slice(0, 10) as Hex
 const JOB_COUNTER_CALL = selector('jobCounter()')
 const GET_JOB_SELECTOR = selector('getJob(uint256)')
 const JOB_ATTESTED_SELECTOR = selector('jobAttested(uint256)')
-const AGGREGATE3_SELECTOR = selector('aggregate3((address,bool,bytes)[])')
 const topicAddress = (a: string) => `0x${'0'.repeat(24)}${a.slice(2).toLowerCase()}`
 
 const JobStatus = { Open: 0, Funded: 1, Submitted: 2, Completed: 3, Rejected: 4, Expired: 5 } as const
@@ -82,17 +82,6 @@ function chainOf(rpc: string) {
   } as const
 }
 
-interface JobView {
-  id: bigint
-  client: Address
-  provider: Address
-  evaluator: Address
-  description: string
-  budget: bigint
-  expiredAt: bigint
-  status: number
-}
-
 interface TickReport {
   head: string
   pages: number
@@ -102,109 +91,8 @@ interface TickReport {
   skipped: string[]
 }
 
-// ---- Lean reads -------------------------------------------------------------
-// Every tick's reads go over plain fetch with hand-decoded results: on a cold
-// isolate, viem's client machinery (transport, retries, multicall batching,
-// ABI codec) cost more CPU than the reads themselves. Sends reuse this path;
-// viem only encodes calldata and produces the signature.
-
-/** One JSON-RPC call; throws on an RPC error (callers decide what that means). */
-async function rpcOnce<T>(url: string, method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  })
-  const body = (await res.json().catch(() => ({}))) as { result?: T; error?: { message?: string } }
-  if (body.result === undefined) throw new Error(`${method}: ${body.error?.message ?? `HTTP ${res.status}`}`)
-  return body.result
-}
-
-const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-/** A read with a light retry: public endpoints rate-limit shared Workers IPs, so
- * try the primary twice (backing off — waiting costs no CPU), then the
- * fallback endpoint once. An execution revert is final and never retried. */
-async function rpc<T>(urls: readonly string[], method: string, params: unknown[]): Promise<T> {
-  const plan = [urls[0], urls[0], urls[urls.length - 1]]
-  let last: unknown
-  for (let i = 0; i < plan.length; i++) {
-    try {
-      return await rpcOnce<T>(plan[i], method, params)
-    } catch (e) {
-      last = e
-      if (/revert/i.test(String((e as Error).message))) break
-      if (i < plan.length - 1) await pause(300 * (i + 1))
-    }
-  }
-  throw last
-}
-
-const word = (hex: string, i: number) => hex.slice(2 + i * 64, 66 + i * 64)
-const uint = (w: string) => BigInt(`0x${w || '0'}`)
-
-const hexWord = (n: number) => n.toString(16).padStart(64, '0')
-
-/** Calldata for Multicall3.aggregate3(Call3[]) with allowFailure on every call:
- * array offset, length, one offset per element, then each element's
- * (target, allowFailure, bytes offset, bytes length, padded bytes). */
-export function encodeAggregate3(calls: { target: Address; callData: Hex }[]): Hex {
-  const elements = calls.map((c) => {
-    const body = c.callData.slice(2)
-    const padded = body.padEnd(Math.ceil(body.length / 64) * 64, '0')
-    return c.target.slice(2).toLowerCase().padStart(64, '0') + hexWord(1) + hexWord(96) + hexWord(body.length / 2) + padded
-  })
-  let offsets = ''
-  let at = calls.length * 32
-  for (const e of elements) {
-    offsets += hexWord(at)
-    at += e.length / 2
-  }
-  return `${AGGREGATE3_SELECTOR}${hexWord(32)}${hexWord(calls.length)}${offsets}${elements.join('')}` as Hex
-}
-
-/** Multicall3.aggregate3 with allowFailure: one eth_call for many reads.
- * Returns each call's returnData, or undefined where the call failed. */
-export async function aggregate3(urls: readonly string[], calls: { target: Address; callData: Hex }[]): Promise<(Hex | undefined)[]> {
-  if (calls.length === 0) return []
-  const raw = await rpc<Hex>(urls, 'eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest'])
-  // Result[] (bool success, bytes returnData): array offset, length, then one
-  // offset per element (relative to the element-offset area).
-  const at = Number(uint(word(raw, 0))) / 32
-  const n = Number(uint(word(raw, at)))
-  const out: (Hex | undefined)[] = []
-  for (let k = 0; k < n; k++) {
-    const el = at + 1 + Number(uint(word(raw, at + 1 + k))) / 32
-    const ok = uint(word(raw, el)) === 1n
-    const bytesAt = el + Number(uint(word(raw, el + 1))) / 32
-    const len = Number(uint(word(raw, bytesAt)))
-    out.push(ok ? (`0x${raw.slice(2 + (bytesAt + 1) * 64, 2 + (bytesAt + 1) * 64 + len * 2)}` as Hex) : undefined)
-  }
-  return out
-}
-
-/** getJob's return value — one dynamic tuple: (id, client, provider, evaluator,
- * description, budget, expiredAt, status, hook). Addresses come back
- * lowercase; compare against lowercase constants. */
-export function decodeJob(data: Hex | undefined): JobView | undefined {
-  if (!data || data.length < 2 + 11 * 64) return undefined
-  const base = Number(uint(word(data, 0))) / 32
-  const f = (k: number) => word(data, base + k)
-  const addr = (k: number) => `0x${f(k).slice(24)}` as Address
-  const descAt = base + Number(uint(f(4))) / 32
-  const descLen = Number(uint(word(data, descAt)))
-  const descHex = data.slice(2 + (descAt + 1) * 64, 2 + (descAt + 1) * 64 + descLen * 2)
-  return {
-    id: uint(f(0)),
-    client: addr(1),
-    provider: addr(2),
-    evaluator: addr(3),
-    description: hexToString(`0x${descHex}`),
-    budget: uint(f(5)),
-    expiredAt: uint(f(6)),
-    status: Number(uint(f(7))),
-  }
-}
+// Reads go over the lean path (lib/lean.ts): plain fetch, hand-coded calldata
+// and results. Sends reuse it; viem only encodes calldata and signs.
 
 /** eth_getLogs over `pages` ranges of LOG_STEP blocks back from `blockHead`,
  * newest first, stopping early once `enough` is satisfied. Sequential, and a
@@ -214,7 +102,7 @@ async function logPages(
   url: string,
   blockHead: bigint,
   pages: number,
-  topics: (Hex | null)[],
+  topics: (Hex | Hex[] | null)[],
   enough: (found: { topics: Hex[]; data: Hex }[]) => boolean = () => false,
 ): Promise<{ topics: Hex[]; data: Hex }[]> {
   const found: { topics: Hex[]; data: Hex }[] = []
@@ -300,12 +188,74 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
     settledIdx.forEach((i, k) => attestedAt.set(i, flags[k] === undefined ? true : uint(word(flags[k] as Hex, 0)) === 1n))
   }
 
-  // Local nonces, incremented per send — receipts are never awaited.
+  // Crash safety. This tick can be killed at any instant (CPU limit, eviction)
+  // and nothing is persisted between ticks, so correctness rests on three rules:
+  //   1. every action is guarded on chain — a replayed setBudget / submit /
+  //      complete / reject / attest reverts (WrongStatus, JobAlreadyAttested),
+  //      and eth_estimateGas runs BEFORE a nonce is taken, so a replay is never
+  //      even broadcast: no double effect;
+  //   2. after a failed broadcast an account sends nothing more this tick, so a
+  //      nonce is never skipped (no gap for a later tx to queue behind);
+  //   3. a previous tick's tx still unmined a tick later (blocks are ~0.5 s) is
+  //      REPLACED with a fee-bumped zero-value self-transfer rather than queued
+  //      behind; whatever it was doing is re-derived from chain next tick.
+  // A killed tick therefore only delays: the next one re-reads chain state.
   const nonces = new Map<Address, number>()
-  async function nextNonce(addr: Address): Promise<number> {
-    if (!nonces.has(addr)) nonces.set(addr, Number(await rpc<Hex>(reads, 'eth_getTransactionCount', [addr, 'pending'])))
-    const n = nonces.get(addr) as number
-    nonces.set(addr, n + 1)
+  const halted = new Set<Address>()
+  async function feeQuote() {
+    const [priceHex, tipHex] = await Promise.all([rpc<Hex>(reads, 'eth_gasPrice', []), rpc<Hex>(reads, 'eth_maxPriorityFeePerGas', [])])
+    return { price: BigInt(priceHex), tip: BigInt(tipHex) }
+  }
+  async function sign(from: Address, transaction: Parameters<typeof signTransaction>[0]['transaction']): Promise<Hex> {
+    useSmallTable()
+    const privateKey = (from === AGENT ? env.AGENT_LEXICA_PRIVATE_KEY : env.ARBITER_PRIVATE_KEY) as Hex
+    return signTransaction({ privateKey, transaction })
+  }
+  async function broadcast(from: Address, signed: Hex): Promise<Hex> {
+    try {
+      await rpc<Hex>(reads, 'eth_sendRawTransaction', [signed])
+    } catch (e) {
+      // A retried broadcast the node already has is a success, not a failure.
+      if (!/already known|known transaction/i.test(String((e as Error).message))) {
+        halted.add(from) // rule 2: never leave a nonce gap
+        throw e
+      }
+    }
+    return keccak256(signed)
+  }
+
+  /** The next nonce for `from`. On the account's first send this tick, a
+   * pending tx left by a previous tick means it is stuck (rule 3): replace it
+   * and send nothing else from this account until the next tick. */
+  async function nextNonce(from: Address): Promise<number | undefined> {
+    if (!nonces.has(from)) {
+      const [latestHex, pendingHex] = await Promise.all([
+        rpc<Hex>(reads, 'eth_getTransactionCount', [from, 'latest']),
+        rpc<Hex>(reads, 'eth_getTransactionCount', [from, 'pending']),
+      ])
+      const latest = Number(latestHex)
+      if (Number(pendingHex) > latest) {
+        halted.add(from)
+        const { price, tip } = await feeQuote()
+        const signed = await sign(from, {
+          chainId: 5042002,
+          type: 'eip1559',
+          to: from,
+          value: 0n,
+          nonce: latest,
+          gas: 21_000n,
+          maxPriorityFeePerGas: tip * 2n,
+          maxFeePerGas: (price + tip) * 2n,
+        })
+        const tx = await broadcast(from, signed)
+        report.sends.push({ action: `replace stuck tx at nonce ${latest}`, jobId: '-', tx })
+        console.log(`[cron] replaced stuck tx of ${from} at nonce ${latest} → ${tx}`)
+        return undefined
+      }
+      nonces.set(from, latest)
+    }
+    const n = nonces.get(from) as number
+    nonces.set(from, n + 1)
     return n
   }
 
@@ -313,34 +263,25 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
    * over the same lean RPC path as the reads (retries + fallback endpoint), with
    * no wallet client: on a cold isolate viem's wallet stack cost more CPU than
    * the signature. The address is public config; only the signature touches the
-   * key, which is never used to derive anything. */
-  async function sendRaw(from: Address, to: Address, data: Hex): Promise<Hex> {
-    const [gasHex, priceHex, tipHex] = await Promise.all([
-      rpc<Hex>(reads, 'eth_estimateGas', [{ from, to, data }]), // a revert stops here, before a nonce is taken
-      rpc<Hex>(reads, 'eth_gasPrice', []),
-      rpc<Hex>(reads, 'eth_maxPriorityFeePerGas', []),
+   * key, which is never used to derive anything. Undefined: not sent this tick. */
+  async function sendRaw(from: Address, to: Address, data: Hex): Promise<Hex | undefined> {
+    const [gasHex, { price, tip }] = await Promise.all([
+      rpc<Hex>(reads, 'eth_estimateGas', [{ from, to, data }]), // rule 1: a revert stops here, before a nonce is taken
+      feeQuote(),
     ])
-    const tip = BigInt(tipHex)
-    const transaction = {
+    const nonce = await nextNonce(from)
+    if (nonce === undefined) return undefined
+    const signed = await sign(from, {
       chainId: 5042002,
-      type: 'eip1559' as const,
+      type: 'eip1559',
       to,
       data,
-      nonce: await nextNonce(from),
+      nonce,
       gas: (BigInt(gasHex) * 120n) / 100n,
       maxPriorityFeePerGas: tip,
-      maxFeePerGas: BigInt(priceHex) + tip,
-    }
-    useSmallTable()
-    const privateKey = (from === AGENT ? env.AGENT_LEXICA_PRIVATE_KEY : env.ARBITER_PRIVATE_KEY) as Hex
-    const signed = await signTransaction({ privateKey, transaction })
-    try {
-      await rpc<Hex>(reads, 'eth_sendRawTransaction', [signed])
-    } catch (e) {
-      // A retried broadcast the node already has is a success, not a failure.
-      if (!/already known|known transaction/i.test(String((e as Error).message))) throw e
-    }
-    return keccak256(signed)
+      maxFeePerGas: price + tip,
+    })
+    return broadcast(from, signed)
   }
 
   async function send(
@@ -353,10 +294,27 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
       report.sends.push({ action: `DRY:${action}`, jobId: jobId.toString(), tx: '' })
       return
     }
+    if (halted.has(from)) {
+      report.skipped.push(`#${jobId} ${action} deferred to next tick`)
+      return
+    }
     const data = encodeFunctionData({ abi: params.abi, functionName: params.functionName, args: params.args } as never)
     const tx = await sendRaw(from, params.address, data)
+    if (!tx) {
+      report.skipped.push(`#${jobId} ${action} deferred to next tick`)
+      return
+    }
     report.sends.push({ action, jobId: jobId.toString(), tx })
     console.log(`[cron] ${action} #${jobId} → ${tx}`)
+  }
+
+  /** The reason a settlement committed on chain (JobCompleted / JobRejected
+   * data), searched back a few pages. */
+  async function settlementReason(jobId: bigint): Promise<Hex | undefined> {
+    const topics: (Hex | Hex[])[] = [[JOB_COMPLETED_TOPIC, JOB_REJECTED_TOPIC], `0x${jobId.toString(16).padStart(64, '0')}`]
+    const found = await logPages(logsRpc, blockHead, SUBMITTED_LOOKBACK_PAGES, topics, (f) => f.length > 0)
+    const data = found[0]?.data
+    return data && data.length >= 66 ? (data.slice(0, 66) as Hex) : undefined
   }
 
   /** Deliverable hash the provider actually submitted (topic-filtered, tiny),
@@ -489,8 +447,15 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
       // jobAttested came from the batched multicall (no per-job subrequest).
       const attested = attestedAt.get(i) ?? true
       if (!attested) {
+        // A tick killed between settling and attesting lands here. Attest with
+        // the reason the settlement actually committed on chain (a late reject
+        // and a bad-work reject differ), never a re-derived guess.
         const good = job.status === JobStatus.Completed
-        const reason = keccak256(toHex(good ? `agentscore:verified:job-${jobId}` : `agentscore:rejected-badwork:job-${jobId}`))
+        const reason = await settlementReason(jobId)
+        if (!reason) {
+          report.skipped.push(`#${jobId} settlement reason not found yet`)
+          continue
+        }
         await send(ARBITER, `arbiter attest ${good ? 'APPROVED' : 'REJECTED'} (repair)`, jobId, {
           address: REGISTRY,
           abi: registryAbi,

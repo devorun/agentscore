@@ -4,7 +4,7 @@ import { publicClient, readChunked } from '../lib/client'
 import { appealsAbi, erc8183Abi, registryAbi } from '../lib/abi'
 import { APPEALS_ADDRESS, API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
 import { apiAgent, STATUS_INDEX, txHashFromUrl } from '../lib/api'
-import { fetchIndexedHead, fetchLogsByTopic, padAddressTopic, type ExplorerLog } from '../lib/explorer'
+import { fetchChainLogs, fetchIndexedHead, fetchLogsByTopic, mergeLogs, padAddressTopic, type ExplorerLog } from '../lib/explorer'
 import { type AgentMetrics, deriveReputation, type JobFact, type ScoreBreakdown, type SettlementFact } from '@shared/score'
 
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
@@ -110,9 +110,15 @@ async function loadAgentData(address: Address): Promise<AgentData> {
 }
 
 /** JobRejected indexes the rejector, not the provider: look each rejection up
- * under the job's evaluator, then under its client (mirrors the API). */
-async function fetchRejections(rejected: JobRow[]): Promise<SettlementFact[]> {
+ * in the backfilled logs, then under the job's evaluator, then under its client
+ * (mirrors the API). */
+async function fetchRejections(rejected: JobRow[], gapLogs: ExplorerLog[]): Promise<SettlementFact[]> {
   const found = new Map<string, SettlementFact>()
+  const wantedIds = new Set(rejected.map((j) => j.jobId.toString()))
+  for (const log of gapLogs) {
+    const s = isEvent(log, JOB_REJECTED_TOPIC) ? settlementOf(log) : undefined
+    if (s && wantedIds.has(s.jobId.toString())) found.set(s.jobId.toString(), s)
+  }
   for (const party of ['evaluator', 'client'] as const) {
     const pending = rejected.filter((j) => !found.has(j.jobId.toString()))
     const wanted = new Set(pending.map((j) => j.jobId.toString()))
@@ -129,17 +135,19 @@ async function fetchRejections(rejected: JobRow[]): Promise<SettlementFact[]> {
 async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   const topic = padAddressTopic(address)
 
-  // The reference block every age is measured against: the newest block the
-  // log index covers (mirrors the API), so a score never claims a block whose
-  // settlements the explorer has not indexed yet.
+  // History up to the chain tip (mirrors the API): the explorer for deep
+  // history, the chain itself for whatever the explorer has not indexed. The
+  // reference block is the last block whose logs are all in hand.
   const [chainHead, indexed] = await Promise.all([publicClient.getBlockNumber(), fetchIndexedHead()])
-  const head = await publicClient.getBlock({ blockNumber: indexed < chainHead ? indexed : chainHead })
+  const { logs: gapLogs, upTo } = indexed < chainHead ? await fetchChainLogs(indexed, chainHead) : { logs: [], upTo: chainHead }
+  const head = await publicClient.getBlock({ blockNumber: upTo })
   const ref = { block: head.number, timestamp: Number(head.timestamp) }
+  const topicLc = topic.toLowerCase()
 
   // Jobs where this address is the provider (JobCreated topic3 = provider).
-  const createdLogs = (await fetchLogsByTopic(ERC8183_ADDRESS, 3, topic)).filter(
-    (log) => isEvent(log, JOB_CREATED_TOPIC) && BigInt(log.blockNumber) <= ref.block,
-  )
+  const createdLogs = mergeLogs(await fetchLogsByTopic(ERC8183_ADDRESS, 3, topic), gapLogs.filter((l) => l.topics[3]?.toLowerCase() === topicLc))
+    .filter((log) => isEvent(log, JOB_CREATED_TOPIC) && BigInt(log.blockNumber) <= ref.block)
+    .sort((a, b) => (BigInt(a.blockNumber) < BigInt(b.blockNumber) ? -1 : 1))
 
   const truncated = createdLogs.length > MAX_JOBS
   const scoped = createdLogs.slice(-MAX_JOBS)
@@ -194,10 +202,10 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
 
   // Settlement times: PaymentReleased where provider = address (topic2), which
   // also gives exact lifetime earnings; JobRejected is looked up per rejector.
-  const payments = (await fetchLogsByTopic(ERC8183_ADDRESS, 2, topic))
+  const payments = mergeLogs(await fetchLogsByTopic(ERC8183_ADDRESS, 2, topic), gapLogs.filter((l) => l.topics[2]?.toLowerCase() === topicLc))
     .filter((log) => isEvent(log, PAYMENT_RELEASED_TOPIC))
     .map((log) => settlementOf(log, decodeAmount(log.data)))
-  const rejections = await fetchRejections(jobs.filter((j) => j.status === JobStatus.Rejected))
+  const rejections = await fetchRejections(jobs.filter((j) => j.status === JobStatus.Rejected), gapLogs)
 
   // Rejections overturned by a second-arbiter appeal (AgentScoreAppeals) are not
   // penalized. A failed read leaves the set empty, so scoring falls back exactly.

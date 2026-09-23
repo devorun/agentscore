@@ -1,4 +1,6 @@
-import { Hono } from 'hono'
+// hono/quick: a router with no build step — the default compiles its route
+// table on the first request, CPU a cold Worker pays on every invocation.
+import { Hono } from 'hono/quick'
 import { cors } from 'hono/cors'
 import { formatUnits } from 'viem'
 import { publicClient } from './lib/chain.js'

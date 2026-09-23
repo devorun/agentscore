@@ -5,12 +5,12 @@
 // final and one-per-job. It never moves ERC-8183 escrow (settlement there is
 // final); it corrects the reputation record. Same honesty rules as judged.ts: a
 // missing key or a provider failure throws LOUDLY; an appeal is never fabricated.
-import { createWalletClient, decodeEventLog, getAddress, http, type Address, type Hex } from 'viem'
+import { createWalletClient, getAddress, http, keccak256, toHex, type Address, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { publicClient } from './chain.js'
 import { appealsAbi } from './abi.js'
 import { APPEALS_ADDRESS, ARC_RPC, arcTestnet } from './config.js'
-import { fetchLogsByTopic, padAddressTopic } from './explorer.js'
+import { fetchLogsByTopic, mergeLogs, padAddressTopic, type ExplorerLog } from './explorer.js'
 import { loadInputDataset } from './enrichment.js'
 import { chat, parseJudgeJson, reasonHashOf, RUBRIC_CRITERIA, type JudgeResult } from './judged.js'
 
@@ -121,22 +121,28 @@ export async function getOnchainAppeal(jobId: bigint): Promise<OnchainAppeal | n
   }
 }
 
-/** Job ids where THIS agent had a rejection overturned on appeal (original =
- * Rejected, result = Approved) by `toBlock`. Reputation reads this to stop
- * penalizing them. */
-export async function fetchOverturnedRejections(agent: Address, toBlock?: bigint): Promise<Set<string>> {
-  const logs = await fetchLogsByTopic(APPEALS_ADDRESS, 2, padAddressTopic(getAddress(agent))).catch(() => [])
+const APPEAL_RESOLVED_TOPIC = keccak256(toHex('AppealResolved(uint256,address,uint8,uint8,bool,bytes32,address)'))
+
+/** Job ids whose rejection an appeal overturned (original = Rejected, result =
+ * Approved) among AppealResolved logs for `agent`, resolved by `toBlock`.
+ * Parsed by hand — (jobId, agent, appealArbiter) indexed; data = original,
+ * result, overturned, reasonHash — so the API skips viem's event codec. */
+export function overturnedFrom(logs: ExplorerLog[], agent: Address, toBlock?: bigint): Set<string> {
+  const agentTopic = padAddressTopic(agent).toLowerCase()
   const out = new Set<string>()
   for (const l of logs) {
+    if (l.topics[0]?.toLowerCase() !== APPEAL_RESOLVED_TOPIC || l.topics[2]?.toLowerCase() !== agentTopic) continue
     if (toBlock !== undefined && BigInt(l.blockNumber) > toBlock) continue // resolved after the reference block
-    try {
-      const { eventName, args } = decodeEventLog({ abi: appealsAbi, topics: l.topics as [Hex, ...Hex[]], data: l.data })
-      if (eventName !== 'AppealResolved') continue
-      const a = args as unknown as { jobId: bigint; original: number; result: number }
-      if (Number(a.original) === 1 && Number(a.result) === 0) out.add(a.jobId.toString())
-    } catch {
-      /* unrelated log shape — skip */
-    }
+    const field = (i: number) => BigInt(`0x${l.data.slice(2 + i * 64, 66 + i * 64) || '0'}`)
+    if (field(0) === 1n && field(1) === 0n) out.add(BigInt(l.topics[1] as string).toString())
   }
   return out
+}
+
+/** Job ids where THIS agent had a rejection overturned on appeal by `toBlock`,
+ * from the explorer plus any `extra` (backfilled) logs. Reputation reads this
+ * to stop penalizing them; a failed explorer read yields no overturns. */
+export async function fetchOverturnedRejections(agent: Address, toBlock?: bigint, extra: ExplorerLog[] = []): Promise<Set<string>> {
+  const logs = await fetchLogsByTopic(APPEALS_ADDRESS, 2, padAddressTopic(getAddress(agent))).catch(() => [] as ExplorerLog[])
+  return overturnedFrom(mergeLogs(logs, extra), agent, toBlock)
 }
