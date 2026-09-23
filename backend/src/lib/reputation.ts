@@ -2,7 +2,7 @@ import { getAddress, keccak256, toHex, type Address } from 'viem'
 import { publicClient } from './chain.js'
 import { erc8183Abi } from './abi.js'
 import { ERC8183_ADDRESS, JobStatus, type JobStatusValue } from './config.js'
-import { fetchLogsByTopic, padAddressTopic, type ExplorerLog } from './explorer.js'
+import { fetchIndexedHead, fetchLogsByTopic, padAddressTopic, type ExplorerLog } from './explorer.js'
 import { fetchOverturnedRejections } from './appeal.js'
 import {
   completionRate,
@@ -43,7 +43,8 @@ export interface AgentReputation {
 }
 
 export interface ReputationOptions {
-  /** Reference block every age is measured against. Default: the chain head. */
+  /** Reference block every age is measured against. Default: the newest block
+   * the log index covers (the chain head when the explorer is current). */
   block?: bigint
   /** Score the agent as it stood when this job was created (the credit-terms
    * gate): the reference becomes the job's creation block. */
@@ -58,8 +59,17 @@ const settlementOf = (l: ExplorerLog, amount6?: bigint): SettlementFact => ({
   amount6,
 })
 
-async function blockAt(blockNumber?: bigint): Promise<ReferenceBlock> {
-  const b = blockNumber === undefined ? await publicClient.getBlock() : await publicClient.getBlock({ blockNumber })
+/** The reference block: the requested one, or the newest block the log index
+ * covers. A score never claims a block whose logs the explorer has not indexed
+ * — a settlement it has not seen would be silently missing, and "computed at
+ * block N" would not be reproducible. */
+async function referenceAt(blockNumber?: bigint): Promise<ReferenceBlock> {
+  const [chainHead, indexed] = await Promise.all([publicClient.getBlockNumber(), fetchIndexedHead()])
+  const covered = indexed < chainHead ? indexed : chainHead
+  if (blockNumber !== undefined && blockNumber > covered) {
+    throw new Error(`block ${blockNumber} is not indexed yet (the log index covers up to ${covered})`)
+  }
+  const b = await publicClient.getBlock({ blockNumber: blockNumber ?? covered })
   return { block: b.number, timestamp: Number(b.timestamp) }
 }
 
@@ -88,12 +98,12 @@ export async function computeReputation(rawAddress: string, opts: ReputationOpti
   const createdLogs = (await fetchLogsByTopic(ERC8183_ADDRESS, 3, topic)).filter((l) => isEvent(l, JOB_CREATED_TOPIC))
 
   // The reference block: the hired job's creation block for the terms gate
-  // (falls back to the head while the explorer is still indexing a brand-new
-  // job), an explicit block, or the chain head.
+  // (falls back to the newest indexed block while the explorer has not indexed
+  // the new job), an explicit block, or the newest indexed block.
   const hireLog = opts.atJob === undefined ? undefined : createdLogs.find((l) => BigInt(l.topics[1] as string) === opts.atJob)
   const ref: ReferenceBlock = hireLog
     ? { block: BigInt(hireLog.blockNumber), timestamp: Number(BigInt(hireLog.timeStamp)) }
-    : await blockAt(opts.block)
+    : await referenceAt(opts.block)
 
   const inScope = createdLogs.filter((l) => BigInt(l.blockNumber) <= ref.block)
   const truncated = inScope.length > MAX_JOBS

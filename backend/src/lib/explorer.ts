@@ -46,6 +46,16 @@ export async function fetchLogsByTopic(
   return out
 }
 
+/** The newest block the explorer's log index covers. It can trail the chain —
+ * it has stalled for hours — and logs past it are simply absent. */
+export async function fetchIndexedHead(): Promise<bigint> {
+  const res = await fetch(`${EXPLORER_URL}/api?module=block&action=eth_block_number`)
+  if (!res.ok) throw new Error(`Explorer API ${res.status}`)
+  const json = (await res.json()) as { result?: string }
+  if (!json.result) throw new Error('Explorer API: no indexed head')
+  return BigInt(json.result)
+}
+
 export function padAddressTopic(address: Address): Hex {
   return `0x${address.toLowerCase().replace(/^0x/, '').padStart(64, '0')}` as Hex
 }

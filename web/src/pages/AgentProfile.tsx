@@ -282,6 +282,9 @@ function DecayCard({ breakdown: b }: { breakdown: ScoreBreakdown }) {
     },
   ]
   const delta = b.score - b.undecayed.score
+  // Display only (the score itself never reads a clock): how far the reference
+  // block — the newest indexed one — trails now.
+  const indexLagHours = Math.floor((Date.now() / 1000 - b.asOf.timestamp) / 3600)
   return (
     <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -324,6 +327,12 @@ function DecayCard({ breakdown: b }: { breakdown: ScoreBreakdown }) {
           </tbody>
         </table>
       </div>
+      {indexLagHours >= 1 ? (
+        <p className="text-[12px] leading-relaxed text-warning">
+          The explorer’s log index trails the chain by about {indexLagHours} h, so this score stops at the last indexed
+          block; newer settlements count once they are indexed.
+        </p>
+      ) : null}
       <p className="max-w-[75ch] text-[12px] leading-relaxed text-muted-foreground/80">
         Each settlement counts less as it ages: approvals halve every {b.halfLifeDays.approval} days, rejections and
         abandonments every {b.halfLifeDays.failure} — failures linger longer. Decay pulls the score back toward the

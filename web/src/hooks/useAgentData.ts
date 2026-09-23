@@ -4,7 +4,7 @@ import { publicClient, readChunked } from '../lib/client'
 import { appealsAbi, erc8183Abi, registryAbi } from '../lib/abi'
 import { APPEALS_ADDRESS, API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
 import { apiAgent, STATUS_INDEX, txHashFromUrl } from '../lib/api'
-import { fetchLogsByTopic, padAddressTopic, type ExplorerLog } from '../lib/explorer'
+import { fetchIndexedHead, fetchLogsByTopic, padAddressTopic, type ExplorerLog } from '../lib/explorer'
 import { type AgentMetrics, deriveReputation, type JobFact, type ScoreBreakdown, type SettlementFact } from '@shared/score'
 
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
@@ -129,8 +129,11 @@ async function fetchRejections(rejected: JobRow[]): Promise<SettlementFact[]> {
 async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   const topic = padAddressTopic(address)
 
-  // The reference block: every age is measured against its timestamp.
-  const head = await publicClient.getBlock()
+  // The reference block every age is measured against: the newest block the
+  // log index covers (mirrors the API), so a score never claims a block whose
+  // settlements the explorer has not indexed yet.
+  const [chainHead, indexed] = await Promise.all([publicClient.getBlockNumber(), fetchIndexedHead()])
+  const head = await publicClient.getBlock({ blockNumber: indexed < chainHead ? indexed : chainHead })
   const ref = { block: head.number, timestamp: Number(head.timestamp) }
 
   // Jobs where this address is the provider (JobCreated topic3 = provider).
