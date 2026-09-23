@@ -4,8 +4,8 @@
 // Designed for the free plan's 10 ms CPU budget (enforcement is ADAPTIVE —
 // overruns degrade later invocations — so this worker runs cool):
 //   - stateless: every tick re-derives everything from the chain (no KV, no FS)
-//   - no key material on idle ticks: signer addresses are public config, and a
-//     signer (with a small secp256k1 table) is built only when a tx is sent
+//   - no key material on idle ticks: signer addresses are public config; a tx is
+//     signed (small secp256k1 table, raw EIP-1559, no wallet client) only to send
 //   - EVENT-based discovery: our agent's jobs come from their JobCreated logs
 //     (provider-indexed, a few sequential pages, no in-tick retries), immune to
 //     churn on the shared contract; ONE multicall then reads their state
@@ -19,8 +19,8 @@
 // keys, never in the repo). Never run the local signing worker (`npm start`)
 // while this cron is scheduled — use `npm run api` locally instead.
 import { secp256k1 } from '@noble/curves/secp256k1'
-import { createPublicClient, createWalletClient, getAddress, hexToString, http, keccak256, toHex, type Address, type Hex, type LocalAccount } from 'viem'
-import { signMessage, signTransaction, signTypedData, toAccount } from 'viem/accounts'
+import { createPublicClient, encodeFunctionData, getAddress, hexToString, http, keccak256, toHex, type Address, type Hex } from 'viem'
+import { signTransaction } from 'viem/accounts'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
 import { ADVANCE_PCT, COLLATERAL_PCT, creditTermsEarned, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
 import { enrich, enrichTampered, hashOutput, verify, type WalletRow } from './lib/enrichment.js'
@@ -105,8 +105,8 @@ interface TickReport {
 // ---- Lean reads -------------------------------------------------------------
 // Every tick's reads go over plain fetch with hand-decoded results: on a cold
 // isolate, viem's client machinery (transport, retries, multicall batching,
-// ABI codec) cost more CPU than the reads themselves. viem is only loaded into
-// the hot path when a transaction is actually sent.
+// ABI codec) cost more CPU than the reads themselves. Sends reuse this path;
+// viem only encodes calldata and produces the signature.
 
 /** One JSON-RPC call; throws on an RPC error (callers decide what that means). */
 async function rpcOnce<T>(url: string, method: string, params: unknown[]): Promise<T> {
@@ -239,40 +239,20 @@ async function logPages(
 // a fraction of that, and signatures stay fast.
 let smallTable = false
 
-/** A signer that never derives its public key: the address is configured (it
- * is public) and only signatures touch the private key. Built lazily, on the
- * first send, so idle ticks never touch key material at all. */
-function signer(address: Address, privateKey: Hex): LocalAccount {
+function useSmallTable() {
   if (!smallTable) {
     secp256k1.ProjectivePoint.BASE._setWindowSize(4)
     smallTable = true
   }
-  return toAccount({
-    address,
-    signMessage: ({ message }) => signMessage({ message, privateKey }),
-    signTransaction: (transaction, options) => signTransaction({ privateKey, transaction, serializer: options?.serializer }),
-    signTypedData: (typedData) => signTypedData({ ...typedData, privateKey } as Parameters<typeof signTypedData>[0]),
-  })
 }
 
 /** One settlement tick: read state, perform at most MAX_SENDS transactions. */
 export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
-  const chain = chainOf(env.ARC_RPC)
-  const pub = createPublicClient({ chain, transport: http(env.ARC_RPC) })
+  const pub = createPublicClient({ chain: chainOf(env.ARC_RPC), transport: http(env.ARC_RPC) })
   const logsRpc = env.LOGS_RPC || DEFAULT_LOGS_RPC
   const reads = [env.ARC_RPC, logsRpc] as const // dRPC first; the official RPC as fallback
   const AGENT = getAddress(env.AGENT_ADDRESS || DEFAULT_AGENT)
   const ARBITER = getAddress(env.ARBITER_ADDRESS || DEFAULT_ARBITER)
-  const wallets = new Map<Address, ReturnType<typeof createWalletClient>>()
-  function wallet(address: Address) {
-    let w = wallets.get(address)
-    if (!w) {
-      const key = (address === AGENT ? env.AGENT_LEXICA_PRIVATE_KEY : env.ARBITER_PRIVATE_KEY) as Hex
-      w = createWalletClient({ account: signer(address, key), chain, transport: http(env.ARC_RPC) })
-      wallets.set(address, w)
-    }
-    return w
-  }
   const price6 = BigInt(Math.round(Number(env.AGENT_PRICE_USDC || '2') * 1e6))
 
   const report: TickReport = { head: '0', pages: 0, discovered: 0, scanned: 0, sends: [], skipped: [] }
@@ -323,11 +303,46 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   // Local nonces, incremented per send — receipts are never awaited.
   const nonces = new Map<Address, number>()
   async function nextNonce(addr: Address): Promise<number> {
-    if (!nonces.has(addr)) nonces.set(addr, await pub.getTransactionCount({ address: addr, blockTag: 'pending' }))
+    if (!nonces.has(addr)) nonces.set(addr, Number(await rpc<Hex>(reads, 'eth_getTransactionCount', [addr, 'pending'])))
     const n = nonces.get(addr) as number
     nonces.set(addr, n + 1)
     return n
   }
+
+  /** A contract call as a raw EIP-1559 transaction — estimate, sign, broadcast
+   * over the same lean RPC path as the reads (retries + fallback endpoint), with
+   * no wallet client: on a cold isolate viem's wallet stack cost more CPU than
+   * the signature. The address is public config; only the signature touches the
+   * key, which is never used to derive anything. */
+  async function sendRaw(from: Address, to: Address, data: Hex): Promise<Hex> {
+    const [gasHex, priceHex, tipHex] = await Promise.all([
+      rpc<Hex>(reads, 'eth_estimateGas', [{ from, to, data }]), // a revert stops here, before a nonce is taken
+      rpc<Hex>(reads, 'eth_gasPrice', []),
+      rpc<Hex>(reads, 'eth_maxPriorityFeePerGas', []),
+    ])
+    const tip = BigInt(tipHex)
+    const transaction = {
+      chainId: 5042002,
+      type: 'eip1559' as const,
+      to,
+      data,
+      nonce: await nextNonce(from),
+      gas: (BigInt(gasHex) * 120n) / 100n,
+      maxPriorityFeePerGas: tip,
+      maxFeePerGas: BigInt(priceHex) + tip,
+    }
+    useSmallTable()
+    const privateKey = (from === AGENT ? env.AGENT_LEXICA_PRIVATE_KEY : env.ARBITER_PRIVATE_KEY) as Hex
+    const signed = await signTransaction({ privateKey, transaction })
+    try {
+      await rpc<Hex>(reads, 'eth_sendRawTransaction', [signed])
+    } catch (e) {
+      // A retried broadcast the node already has is a success, not a failure.
+      if (!/already known|known transaction/i.test(String((e as Error).message))) throw e
+    }
+    return keccak256(signed)
+  }
+
   async function send(
     from: Address,
     action: string,
@@ -338,8 +353,8 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
       report.sends.push({ action: `DRY:${action}`, jobId: jobId.toString(), tx: '' })
       return
     }
-    const nonce = await nextNonce(from)
-    const tx = await wallet(from).writeContract({ ...params, nonce, chain } as never)
+    const data = encodeFunctionData({ abi: params.abi, functionName: params.functionName, args: params.args } as never)
+    const tx = await sendRaw(from, params.address, data)
     report.sends.push({ action, jobId: jobId.toString(), tx })
     console.log(`[cron] ${action} #${jobId} → ${tx}`)
   }
