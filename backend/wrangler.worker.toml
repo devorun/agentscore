@@ -17,7 +17,12 @@ crons = ["* * * * *"]
 
 [vars]
 ARC_RPC = "https://arc-testnet.drpc.org"
+# dRPC's free plan no longer serves eth_getLogs; log queries use the official RPC.
+LOGS_RPC = "https://rpc.testnet.arc.network"
 AGENT_PRICE_USDC = "2"
+# Public addresses of the secret keys above — reads never touch key material.
+AGENT_ADDRESS = "0x939ABdD89fE9C5aAC54615f56c50901acf5E6918"
+ARBITER_ADDRESS = "0x5d474e5125D7ee1a63EE2f2444a88e2a518683E9"
 
 [observability]
 enabled = true

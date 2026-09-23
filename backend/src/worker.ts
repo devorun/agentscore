@@ -115,7 +115,8 @@ export async function startWorker(): Promise<void> {
    */
   async function termsSatisfied(jobId: bigint, job: JobView, terms: TermsMarker): Promise<boolean> {
     if (terms.tier === 'credit') {
-      if (!(await creditEarned(jobId, terms))) return false
+      // Earned-at-hire was checked when pricing (setBudget); a funded credit job
+      // already proves it, and history up to the hire block never changes.
       if (!terms.advanceTx) {
         log(`job #${jobId} credit terms but no advance tx in marker — waiting`)
         return false
