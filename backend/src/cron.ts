@@ -19,7 +19,7 @@
 // keys, never in the repo). Never run the local signing worker (`npm start`)
 // while this cron is scheduled — use `npm run api` locally instead.
 import { secp256k1 } from '@noble/curves/secp256k1'
-import { createPublicClient, createWalletClient, getAddress, http, keccak256, toHex, type Address, type Hex, type LocalAccount } from 'viem'
+import { createPublicClient, createWalletClient, getAddress, hexToString, http, keccak256, toHex, type Address, type Hex, type LocalAccount } from 'viem'
 import { signMessage, signTransaction, signTypedData, toAccount } from 'viem/accounts'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
 import { ADVANCE_PCT, COLLATERAL_PCT, creditTermsEarned, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
@@ -62,7 +62,12 @@ const TAIL_JOBS = 20n // counter-based safety net for the newest jobs
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
 const JOB_SUBMITTED_TOPIC = keccak256(toHex('JobSubmitted(uint256,address,bytes32)'))
 const TRANSFER_TOPIC = keccak256(toHex('Transfer(address,address,uint256)'))
-const JOB_COUNTER_CALL = keccak256(toHex('jobCounter()')).slice(0, 10) as Hex // selector
+// Function selectors, computed once at startup (not per tick).
+const selector = (signature: string) => keccak256(toHex(signature)).slice(0, 10) as Hex
+const JOB_COUNTER_CALL = selector('jobCounter()')
+const GET_JOB_SELECTOR = selector('getJob(uint256)')
+const JOB_ATTESTED_SELECTOR = selector('jobAttested(uint256)')
+const AGGREGATE3_SELECTOR = selector('aggregate3((address,bool,bytes)[])')
 const topicAddress = (a: string) => `0x${'0'.repeat(24)}${a.slice(2).toLowerCase()}`
 
 const JobStatus = { Open: 0, Funded: 1, Submitted: 2, Completed: 3, Rejected: 4, Expired: 5 } as const
@@ -97,14 +102,96 @@ interface TickReport {
   skipped: string[]
 }
 
-type Logs = ReturnType<typeof createPublicClient>
+// ---- Lean reads -------------------------------------------------------------
+// Every tick's reads go over plain fetch with hand-decoded results: on a cold
+// isolate, viem's client machinery (transport, retries, multicall batching,
+// ABI codec) cost more CPU than the reads themselves. viem is only loaded into
+// the hot path when a transaction is actually sent.
+
+/** One JSON-RPC call; throws on an RPC error (callers decide what that means). */
+async function rpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  })
+  const body = (await res.json()) as { result?: T; error?: { message?: string } }
+  if (body.result === undefined) throw new Error(`${method}: ${body.error?.message ?? `HTTP ${res.status}`}`)
+  return body.result
+}
+
+const word = (hex: string, i: number) => hex.slice(2 + i * 64, 66 + i * 64)
+const uint = (w: string) => BigInt(`0x${w || '0'}`)
+
+const hexWord = (n: number) => n.toString(16).padStart(64, '0')
+
+/** Calldata for Multicall3.aggregate3(Call3[]) with allowFailure on every call:
+ * array offset, length, one offset per element, then each element's
+ * (target, allowFailure, bytes offset, bytes length, padded bytes). */
+export function encodeAggregate3(calls: { target: Address; callData: Hex }[]): Hex {
+  const elements = calls.map((c) => {
+    const body = c.callData.slice(2)
+    const padded = body.padEnd(Math.ceil(body.length / 64) * 64, '0')
+    return c.target.slice(2).toLowerCase().padStart(64, '0') + hexWord(1) + hexWord(96) + hexWord(body.length / 2) + padded
+  })
+  let offsets = ''
+  let at = calls.length * 32
+  for (const e of elements) {
+    offsets += hexWord(at)
+    at += e.length / 2
+  }
+  return `${AGGREGATE3_SELECTOR}${hexWord(32)}${hexWord(calls.length)}${offsets}${elements.join('')}` as Hex
+}
+
+/** Multicall3.aggregate3 with allowFailure: one eth_call for many reads.
+ * Returns each call's returnData, or undefined where the call failed. */
+export async function aggregate3(url: string, calls: { target: Address; callData: Hex }[]): Promise<(Hex | undefined)[]> {
+  if (calls.length === 0) return []
+  const raw = await rpc<Hex>(url, 'eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest'])
+  // Result[] (bool success, bytes returnData): array offset, length, then one
+  // offset per element (relative to the element-offset area).
+  const at = Number(uint(word(raw, 0))) / 32
+  const n = Number(uint(word(raw, at)))
+  const out: (Hex | undefined)[] = []
+  for (let k = 0; k < n; k++) {
+    const el = at + 1 + Number(uint(word(raw, at + 1 + k))) / 32
+    const ok = uint(word(raw, el)) === 1n
+    const bytesAt = el + Number(uint(word(raw, el + 1))) / 32
+    const len = Number(uint(word(raw, bytesAt)))
+    out.push(ok ? (`0x${raw.slice(2 + (bytesAt + 1) * 64, 2 + (bytesAt + 1) * 64 + len * 2)}` as Hex) : undefined)
+  }
+  return out
+}
+
+/** getJob's return value — one dynamic tuple: (id, client, provider, evaluator,
+ * description, budget, expiredAt, status, hook). Addresses come back
+ * lowercase; compare against lowercase constants. */
+export function decodeJob(data: Hex | undefined): JobView | undefined {
+  if (!data || data.length < 2 + 11 * 64) return undefined
+  const base = Number(uint(word(data, 0))) / 32
+  const f = (k: number) => word(data, base + k)
+  const addr = (k: number) => `0x${f(k).slice(24)}` as Address
+  const descAt = base + Number(uint(f(4))) / 32
+  const descLen = Number(uint(word(data, descAt)))
+  const descHex = data.slice(2 + (descAt + 1) * 64, 2 + (descAt + 1) * 64 + descLen * 2)
+  return {
+    id: uint(f(0)),
+    client: addr(1),
+    provider: addr(2),
+    evaluator: addr(3),
+    description: hexToString(`0x${descHex}`),
+    budget: uint(f(5)),
+    expiredAt: uint(f(6)),
+    status: Number(uint(f(7))),
+  }
+}
 
 /** eth_getLogs over `pages` ranges of LOG_STEP blocks back from `blockHead`,
  * newest first, stopping early once `enough` is satisfied. Sequential, and a
  * failed page contributes nothing: no retry storm (each failed request used to
  * cost CPU building viem errors, times three retries). */
 async function logPages(
-  logs: Logs,
+  url: string,
   blockHead: bigint,
   pages: number,
   topics: (Hex | null)[],
@@ -116,11 +203,8 @@ async function logPages(
     if (to < 0n) break
     const from = to > LOG_STEP ? to - LOG_STEP + 1n : 0n
     try {
-      const page = (await logs.request({
-        method: 'eth_getLogs',
-        params: [{ address: ERC8183, topics, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }],
-      } as never)) as { topics: Hex[]; data: Hex }[]
-      found.push(...page)
+      const params = [{ address: ERC8183, topics, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]
+      found.push(...(await rpc<{ topics: Hex[]; data: Hex }[]>(url, 'eth_getLogs', params)))
       if (enough(found)) break
     } catch {
       /* page unavailable this tick — the counter tail still covers new jobs */
@@ -155,7 +239,7 @@ function signer(address: Address, privateKey: Hex): LocalAccount {
 export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   const chain = chainOf(env.ARC_RPC)
   const pub = createPublicClient({ chain, transport: http(env.ARC_RPC) })
-  const logs = createPublicClient({ chain, transport: http(env.LOGS_RPC || DEFAULT_LOGS_RPC, { retryCount: 0 }) })
+  const logsRpc = env.LOGS_RPC || DEFAULT_LOGS_RPC
   const AGENT = getAddress(env.AGENT_ADDRESS || DEFAULT_AGENT)
   const ARBITER = getAddress(env.ARBITER_ADDRESS || DEFAULT_ARBITER)
   const wallets = new Map<Address, ReturnType<typeof createWalletClient>>()
@@ -171,10 +255,9 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   const price6 = BigInt(Math.round(Number(env.AGENT_PRICE_USDC || '2') * 1e6))
 
   const report: TickReport = { head: '0', pages: 0, discovered: 0, scanned: 0, sends: [], skipped: [] }
-  // Two plain JSON-RPC reads (no ABI machinery on the hot path of every tick).
   const [counterHex, blockHex] = await Promise.all([
-    pub.request({ method: 'eth_call', params: [{ to: ERC8183, data: JOB_COUNTER_CALL }, 'latest'] }) as Promise<Hex>,
-    pub.request({ method: 'eth_blockNumber' }) as Promise<Hex>,
+    rpc<Hex>(env.ARC_RPC, 'eth_call', [{ to: ERC8183, data: JOB_COUNTER_CALL }, 'latest']),
+    rpc<Hex>(env.ARC_RPC, 'eth_blockNumber', []),
   ])
   const head = BigInt(counterHex)
   const blockHead = BigInt(blockHex)
@@ -187,7 +270,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   // oldest-first, so stranded jobs recover before newer ones.
   const pages = Math.max(1, Number(env.DISCOVERY_PAGES ?? '') || DEFAULT_DISCOVERY_PAGES)
   report.pages = pages
-  const created = await logPages(logs, blockHead, pages, [JOB_CREATED_TOPIC, null, null, topicAddress(AGENT) as Hex])
+  const created = await logPages(logsRpc, blockHead, pages, [JOB_CREATED_TOPIC, null, null, topicAddress(AGENT) as Hex])
   const idSet = new Set(created.map((l) => BigInt(l.topics[1])))
   const tailFrom = head > TAIL_JOBS ? head - TAIL_JOBS : 0n
   for (let i = tailFrom; i < head; i++) idSet.add(i)
@@ -197,28 +280,23 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   // One multicall reads every job's state. The registry's jobAttested (for the
   // attestation-repair path) is read only for OUR settled jobs, in a second
   // small multicall — most scanned ids are other agents' jobs.
-  const states = await pub.multicall({
-    contracts: ids.map((jobId) => ({ address: ERC8183, abi: erc8183Abi, functionName: 'getJob' as const, args: [jobId] as const })),
-    allowFailure: true,
-  })
+  const idArg = (id: bigint) => id.toString(16).padStart(64, '0')
+  const states = (await aggregate3(env.ARC_RPC, ids.map((id) => ({ target: ERC8183, callData: `${GET_JOB_SELECTOR}${idArg(id)}` as Hex })))).map(decodeJob)
   report.scanned = ids.length
-  const ours = (i: number) => {
-    const s = states[i]
-    if (s.status !== 'success') return false
-    const job = s.result as unknown as JobView
-    return getAddress(job.provider) === AGENT && getAddress(job.evaluator) === ARBITER
-  }
+  const agentLc = AGENT.toLowerCase()
+  const arbiterLc = ARBITER.toLowerCase()
+  const ours = (job: JobView | undefined): job is JobView => job?.provider === agentLc && job.evaluator === arbiterLc
   const settledIdx = ids
     .map((_, i) => i)
-    .filter((i) => ours(i) && [JobStatus.Completed, JobStatus.Rejected].includes((states[i].result as unknown as JobView).status as 3 | 4))
+    .filter((i) => {
+      const job = states[i]
+      return ours(job) && (job.status === JobStatus.Completed || job.status === JobStatus.Rejected)
+    })
   const attestedAt = new Map<number, boolean>()
   if (settledIdx.length > 0) {
-    const attested = await pub.multicall({
-      contracts: settledIdx.map((i) => ({ address: REGISTRY, abi: registryAbi, functionName: 'jobAttested' as const, args: [ids[i]] as const })),
-      allowFailure: true,
-    })
+    const flags = await aggregate3(env.ARC_RPC, settledIdx.map((i) => ({ target: REGISTRY, callData: `${JOB_ATTESTED_SELECTOR}${idArg(ids[i])}` as Hex })))
     // An unreadable flag counts as attested: never re-attest on a failed read.
-    settledIdx.forEach((i, k) => attestedAt.set(i, attested[k].status === 'success' ? (attested[k].result as boolean) : true))
+    settledIdx.forEach((i, k) => attestedAt.set(i, flags[k] === undefined ? true : uint(word(flags[k] as Hex, 0)) === 1n))
   }
 
   // Local nonces, incremented per send — receipts are never awaited.
@@ -250,7 +328,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
    * aborting the whole scan. */
   async function submittedHash(jobId: bigint): Promise<Hex | undefined> {
     const topics = [JOB_SUBMITTED_TOPIC, `0x${jobId.toString(16).padStart(64, '0')}` as Hex]
-    const found = await logPages(logs, blockHead, SUBMITTED_LOOKBACK_PAGES, topics, (f) => f.length > 0)
+    const found = await logPages(logsRpc, blockHead, SUBMITTED_LOOKBACK_PAGES, topics, (f) => f.length > 0)
     const data = found[0]?.data
     return data && data.length >= 66 ? (data.slice(0, 66) as Hex) : undefined
   }
@@ -313,12 +391,11 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   const nowSec = Math.floor(Date.now() / 1000)
 
   for (let i = 0; i < ids.length && report.sends.length < MAX_SENDS; i++) {
-    const state = states[i]
-    if (state.status !== 'success') continue
-    const job = state.result as unknown as JobView
+    const job = states[i]
+    if (!job) continue
     const jobId = ids[i]
     try {
-    if (getAddress(job.provider) !== AGENT || getAddress(job.evaluator) !== ARBITER) continue
+    if (!ours(job)) continue
     if (isJudgedJob(job.description)) {
       if (job.status !== JobStatus.Completed && job.status !== JobStatus.Rejected) report.skipped.push(`#${jobId} judged (local-worker feature)`)
       continue
