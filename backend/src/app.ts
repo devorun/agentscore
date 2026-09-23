@@ -49,14 +49,26 @@ app.get('/health', async (c) => {
 
 app.get('/agents', (c) => c.json({ count: AGENTS.length, agents: AGENTS }))
 
+// ?block=N recomputes the score as it stood at block N: ages are measured
+// against that block's timestamp, so the same block always gives the same score.
 app.get('/agent/:address', async (c) => {
+  const block = c.req.query('block')
+  if (block !== undefined && !/^\d+$/.test(block)) return c.json({ error: 'block must be a block number' }, 400)
   try {
-    const r = await computeReputation(c.req.param('address'))
+    const r = await computeReputation(c.req.param('address'), { block: block === undefined ? undefined : BigInt(block) })
+    const round2 = (x: number) => Number(x.toFixed(2))
     return c.json({
       address: r.address,
       score: r.score,
+      asOf: r.breakdown.asOf,
+      lastActive: r.breakdown.lastActive,
+      dormant: r.breakdown.dormant,
       creditTerms: creditTerms(r.score),
-      breakdown: { ...r.breakdown, volumeBonus: Number(r.breakdown.volumeBonus.toFixed(2)) },
+      breakdown: {
+        ...r.breakdown,
+        volumeBonus: round2(r.breakdown.volumeBonus),
+        undecayed: { ...r.breakdown.undecayed, volumeBonus: round2(r.breakdown.undecayed.volumeBonus) },
+      },
       completionRate: r.completionRate,
       metrics: {
         totalJobs: r.metrics.totalJobs,

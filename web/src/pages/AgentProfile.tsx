@@ -3,9 +3,9 @@ import { useAccount } from 'wagmi'
 import { ArrowUpRight } from 'lucide-react'
 import { useAgentData, type AgentData } from '@/hooks/useAgentData'
 import { creditTerms, type CreditTier } from '@/lib/credit'
-import { completionRate } from '@/lib/score'
+import { completionRate, type ScoreBreakdown } from '@shared/score'
 import { JobStatus } from '@/lib/config'
-import { addressUrl, formatTimestamp, formatUsdc, shortAddress, statusPill, txUrl, type PillSpec } from '@/lib/format'
+import { addressUrl, blockUrl, formatTimestamp, formatUsdc, shortAddress, statusPill, txUrl, type PillSpec } from '@/lib/format'
 import { ScoreDial } from '@/components/ScoreDial'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -133,13 +133,14 @@ function ProfileBody({ data }: { data: AgentData }) {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[300px_1fr]">
         <Card className="flex flex-col items-center gap-4 rounded-xl border-border bg-card p-6">
           <ScoreDial score={breakdown.score} size={140} />
-          <div className="text-center">
+          <div className="flex flex-col items-center gap-2 text-center">
             <p className="text-[13px] font-medium text-foreground">Reputation</p>
-            <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+            <p className="text-[12px] leading-relaxed text-muted-foreground">
               Base {breakdown.base} · approvals +{breakdown.approvalPoints} · rejections {breakdown.rejectionPoints} ·
               volume +{breakdown.volumeBonus.toFixed(1)} · {breakdown.distinctClients}{' '}
               {breakdown.distinctClients === 1 ? 'client' : 'clients'}
             </p>
+            <LastActive breakdown={breakdown} />
           </div>
         </Card>
 
@@ -157,6 +158,8 @@ function ProfileBody({ data }: { data: AgentData }) {
           </p>
         ) : null}
       </div>
+
+      <DecayCard breakdown={breakdown} />
 
       <CreditTermsCard score={breakdown.score} />
 
@@ -236,6 +239,98 @@ function ProfileBody({ data }: { data: AgentData }) {
         )}
       </section>
     </>
+  )
+}
+
+const DAY = 86_400
+const signed = (x: number) => (x > 0 ? `+${x.toFixed(2)}` : x < 0 ? `−${Math.abs(x).toFixed(2)}` : '0')
+
+// Recency of the record: the last settlement that counts, and whether the agent
+// has gone quiet long enough that its score is drifting back to 50.
+function LastActive({ breakdown }: { breakdown: ScoreBreakdown }) {
+  if (breakdown.lastActive === null) {
+    return <p className="text-[12px] text-muted-foreground">Last active: no settlements yet</p>
+  }
+  const days = Math.floor((breakdown.asOf.timestamp - breakdown.lastActive) / DAY)
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <span className="text-[12px] text-muted-foreground">
+        Last active {formatTimestamp(breakdown.lastActive).slice(0, 10)} ·{' '}
+        {days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`}
+      </span>
+      {breakdown.dormant ? (
+        <Badge variant="outline" className="rounded-md border-warning/30 bg-warning/10 text-[11px] font-medium tracking-wide text-warning">
+          DORMANT
+        </Badge>
+      ) : null}
+    </div>
+  )
+}
+
+// How time decay moved this score: every term with and without decay, at the
+// reference block — the numbers anyone can recompute from the chain.
+function DecayCard({ breakdown: b }: { breakdown: ScoreBreakdown }) {
+  const rows: { label: string; full: string; now: string; halfLife: string }[] = [
+    { label: 'Approvals (diversity-weighted)', full: signed(b.undecayed.approvalPoints), now: signed(b.approvalPoints), halfLife: `${b.halfLifeDays.approval} days` },
+    { label: 'Rejections', full: signed(b.undecayed.rejectionPoints), now: signed(b.rejectionPoints), halfLife: `${b.halfLifeDays.failure} days` },
+    { label: 'Abandonments', full: signed(b.undecayed.abandonmentPoints), now: signed(b.abandonmentPoints), halfLife: `${b.halfLifeDays.failure} days` },
+    {
+      label: 'Volume bonus',
+      full: `${signed(b.undecayed.volumeBonus)} (${b.volumeUsdc.toFixed(2)} USDC)`,
+      now: `${signed(b.volumeBonus)} (${b.decayedVolumeUsdc.toFixed(2)} USDC)`,
+      halfLife: `${b.halfLifeDays.approval} days`,
+    },
+  ]
+  const delta = b.score - b.undecayed.score
+  return (
+    <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">Score decay</h2>
+        <span className="text-[12px] text-muted-foreground">
+          Computed at block{' '}
+          <a href={blockUrl(BigInt(b.asOf.block))} target="_blank" rel="noreferrer noopener" className="tabular text-neon hover:opacity-80">
+            {Number(b.asOf.block).toLocaleString('en-US')}
+          </a>{' '}
+          · {formatTimestamp(b.asOf.timestamp)}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[520px] text-[14px]">
+          <thead>
+            <tr className="border-b border-border text-[12px] uppercase tracking-wider text-muted-foreground/70">
+              <th className="py-2 pr-4 text-left font-medium">Term</th>
+              <th className="py-2 pr-4 text-right font-medium">Without decay</th>
+              <th className="py-2 pr-4 text-right font-medium">Counts now</th>
+              <th className="py-2 text-right font-medium">Half-life</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label} className="border-b border-border">
+                <td className="py-2 pr-4 text-muted-foreground">{r.label}</td>
+                <td className="tabular py-2 pr-4 text-right text-muted-foreground">{r.full}</td>
+                <td className="tabular py-2 pr-4 text-right text-foreground">{r.now}</td>
+                <td className="tabular py-2 text-right text-muted-foreground">{r.halfLife}</td>
+              </tr>
+            ))}
+            <tr>
+              <td className="py-2 pr-4 font-semibold text-foreground">Score (base {b.base})</td>
+              <td className="tabular py-2 pr-4 text-right text-muted-foreground">{b.undecayed.score}</td>
+              <td className="tabular py-2 pr-4 text-right font-semibold text-foreground">{b.score}</td>
+              <td className="tabular py-2 text-right text-[12px] text-muted-foreground">
+                {delta === 0 ? 'unchanged' : `${delta > 0 ? '+' : '−'}${Math.abs(delta)} from decay`}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="max-w-[75ch] text-[12px] leading-relaxed text-muted-foreground/80">
+        Each settlement counts less as it ages: approvals halve every {b.halfLifeDays.approval} days, rejections and
+        abandonments every {b.halfLifeDays.failure} — failures linger longer. Decay pulls the score back toward the
+        neutral {b.base}, never toward 0. Ages are measured against the block above, so recomputing at that block gives
+        this exact score.
+      </p>
+    </Card>
   )
 }
 

@@ -3,9 +3,10 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { publicClient } from './lib/chain.js'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
 import { arcTestnet, ARC_RPC, ERC8183_ADDRESS, EXPLORER_URL, JobStatus, REGISTRY_ADDRESS, USDC_ADDRESS } from './lib/config.js'
-import { ADVANCE_PCT, COLLATERAL_PCT, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
+import { ADVANCE_PCT, COLLATERAL_PCT, creditTermsEarned, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
 import { enrich, enrichTampered, hashOutput, loadInputDataset, verify } from './lib/enrichment.js'
 import { agentWriteMemo, arbiterJudge, isJudgedJob, isLazyRun, judgedSpec, llmKeyPresent, reasonHashOf } from './lib/judged.js'
+import { computeReputation } from './lib/reputation.js'
 import { getDeliverable, saveDeliverable, setVerdict, type DeliverableRecord } from './lib/store.js'
 
 const TRANSFER_TOPIC = keccak256(toHex('Transfer(address,address,uint256)'))
@@ -94,6 +95,19 @@ export async function startWorker(): Promise<void> {
   }
 
   /**
+   * Credit terms must be earned: the agent's score as it stood at the hire
+   * block, computed by the shared scoring module (the same code the API and the
+   * cloud cron use). A failed read throws → retried next cycle, never a pass.
+   */
+  async function creditEarned(jobId: bigint, terms: TermsMarker): Promise<boolean> {
+    if (terms.tier !== 'credit') return true
+    const atHire = await computeReputation(AGENT, { atJob: jobId })
+    if (creditTermsEarned(terms, atHire.score)) return true
+    log(`job #${jobId} credit terms not earned: score ${atHire.score} at block ${atHire.breakdown.asOf.block} — not working`)
+    return false
+  }
+
+  /**
    * The agent's side of credit terms — verify the advance landed (credit tier)
    * or the collateral is posted and correctly shaped (collateral tier) BEFORE
    * doing any work. This is orchestration + self-interest, not chain law: the
@@ -101,6 +115,7 @@ export async function startWorker(): Promise<void> {
    */
   async function termsSatisfied(jobId: bigint, job: JobView, terms: TermsMarker): Promise<boolean> {
     if (terms.tier === 'credit') {
+      if (!(await creditEarned(jobId, terms))) return false
       if (!terms.advanceTx) {
         log(`job #${jobId} credit terms but no advance tx in marker — waiting`)
         return false
@@ -233,8 +248,10 @@ export async function startWorker(): Promise<void> {
     try {
       acting.add(jobId)
       if (agentShouldSetBudget(job)) {
-        // Credit tier: the advance is paid directly, so escrow only the rest.
+        // Credit tier: the advance is paid directly, so escrow only the rest —
+        // but never price a job on credit terms the agent had not earned.
         const terms = parseTermsMarker(job.description)
+        if (terms && !(await creditEarned(jobId, terms))) return
         const escrow6 = terms?.tier === 'credit' ? (PRICE_6 * BigInt(100 - ADVANCE_PCT)) / 100n : PRICE_6
         await send(`agent setBudget #${jobId}${terms?.tier === 'credit' ? ` (credit: ${100 - ADVANCE_PCT}% escrow after ${ADVANCE_PCT}% advance)` : ''}`, agent, {
           address: ERC8183_ADDRESS,

@@ -122,11 +122,13 @@ export async function getOnchainAppeal(jobId: bigint): Promise<OnchainAppeal | n
 }
 
 /** Job ids where THIS agent had a rejection overturned on appeal (original =
- * Rejected, result = Approved). Reputation reads this to stop penalizing them. */
-export async function fetchOverturnedRejections(agent: Address): Promise<Set<string>> {
+ * Rejected, result = Approved) by `toBlock`. Reputation reads this to stop
+ * penalizing them. */
+export async function fetchOverturnedRejections(agent: Address, toBlock?: bigint): Promise<Set<string>> {
   const logs = await fetchLogsByTopic(APPEALS_ADDRESS, 2, padAddressTopic(getAddress(agent))).catch(() => [])
   const out = new Set<string>()
   for (const l of logs) {
+    if (toBlock !== undefined && BigInt(l.blockNumber) > toBlock) continue // resolved after the reference block
     try {
       const { eventName, args } = decodeEventLog({ abi: appealsAbi, topics: l.topics as [Hex, ...Hex[]], data: l.data })
       if (eventName !== 'AppealResolved') continue

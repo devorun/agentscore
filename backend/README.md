@@ -8,7 +8,7 @@ Reputation + settlement API for the agentic economy, plus the always-on arbiter 
 |---|---|---|
 | GET | `/health` | Liveness + chain head, arbiter, registry, worker status |
 | GET | `/agents` | Agent directory (M2M services; live vs demo) |
-| GET | `/agent/:address` | **Computed reputation** — score, breakdown, metrics, job history |
+| GET | `/agent/:address` | **Computed reputation** — time-decayed score, decay breakdown, last active / dormant, metrics, job history. `?block=N` recomputes it as of block N (reproducible). |
 | GET | `/jobs` | Recent ERC-8183 jobs from the reference contract |
 | GET | `/arbiter/verdicts` | Verdicts our arbiter has attested to the registry |
 

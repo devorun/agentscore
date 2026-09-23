@@ -5,6 +5,7 @@
 // client is its provider, the arbiter its evaluator) — Circle's audited escrow
 // custodies it and our contracts still hold no funds. Enforcement is
 // orchestration + self-interest, not chain law.
+export { isCollateralJob } from '@shared/score'
 
 export type CreditTier = 'credit' | 'standard' | 'collateral'
 
@@ -47,10 +48,6 @@ export function creditTerms(score: number): CreditTerms {
     headline: `Collateral required — ${COLLATERAL_PCT}% slashable`,
     detail: `Score ${score} must post ${COLLATERAL_PCT}% of the budget as slashable collateral (escrowed in the reference contract) before the client funds. Rejected work forfeits it to the client.`,
   }
-}
-
-export function isCollateralJob(description: string): boolean {
-  return /^\s*\[COLLATERAL\]/i.test(description)
 }
 
 export interface TermsMarker {

@@ -130,12 +130,14 @@ export function Arbiter() {
           Reputation is computed only from settled onchain work — transparency is the product. The formula:
         </p>
         <Card className="flex flex-col gap-2 rounded-xl border-border bg-card p-5 text-[14px]">
-          <Line k="Start" v="50" />
-          <Line k="Approved settlement" v="+8 each (diminishing to +2 after 10), diversity-weighted" />
+          <Line k="Start" v="50 (neutral)" />
+          <Line k="Approved settlement" v="+8 each (diminishing to +2 after 10), diversity-weighted, 90-day half-life" />
           <Line k="Client diversity weight" v="k-th settlement from the same client: full up to 3, then 3/k" />
-          <Line k="Rejected verdict" v="−20 each (never diversity-discounted)" />
-          <Line k="Expired-unfunded abandonment (as provider)" v="−10 each" />
-          <Line k="Volume bonus" v="up to +10, log-scaled on diversity-weighted USDC settled" />
+          <Line k="Rejected verdict" v="−20 each (never diversity-discounted), 180-day half-life" />
+          <Line k="Expired-unfunded abandonment (as provider)" v="−10 each, 180-day half-life" />
+          <Line k="Volume bonus" v="up to +10, log-scaled on decayed, diversity-weighted USDC settled" />
+          <Line k="Time decay" v="each term × 2^(−age ÷ half-life), age measured at a reference block" />
+          <Line k="Dormant" v="no settlement in 30 days" />
           <Line k="Clamp" v="0–100" />
         </Card>
         <div className="flex flex-col gap-2 rounded-xl border border-neon/20 bg-neon/5 p-4">
@@ -149,6 +151,21 @@ export function Arbiter() {
             <span className="font-semibold text-foreground">Failures can’t be laundered.</span> A rejected verdict is a
             full −20 and is <span className="text-foreground">never</span> diversity-discounted. Wins are weighted down
             for honesty; losses are never softened — you cannot dilute a failure by spreading work across clients.
+          </p>
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <span className="font-semibold text-foreground">Reputation is recent, and failures linger.</span> Every
+            settlement counts less as it ages: an approval loses half its weight every 90 days, a rejection only every 180
+            — so a failure keeps its weight twice as long as a success. Decay multiplies with client-diversity
+            weighting, and the volume bonus uses decayed volume. Because every term is a delta from 50, an agent that
+            stops working drifts back to the <span className="text-foreground">neutral 50</span> — not to 0: silence
+            erases a track record, it doesn’t convict.
+          </p>
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <span className="font-semibold text-foreground">Computed at block N.</span> Ages are measured against the
+            timestamp of a reference block, never a server clock, so any score is reproducible: the same block always
+            yields the same number. The API, the settlement worker’s credit-terms gate and this app all run the same
+            scoring module — and the gate scores an agent at the block its job was hired, so credit terms must have been
+            earned at hire, whenever the check runs.
           </p>
         </div>
         <p className="max-w-[64ch] text-[13px] leading-relaxed text-muted-foreground">

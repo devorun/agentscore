@@ -4,12 +4,12 @@ import { publicClient, readChunked } from '../lib/client'
 import { appealsAbi, erc8183Abi, registryAbi } from '../lib/abi'
 import { APPEALS_ADDRESS, API_URL, ERC8183_ADDRESS, JobStatus, REGISTRY_ADDRESS, USDC_DECIMALS, type JobStatusValue } from '../lib/config'
 import { apiAgent, STATUS_INDEX, txHashFromUrl } from '../lib/api'
-import { fetchLogsByTopic, padAddressTopic } from '../lib/explorer'
-import { isCollateralJob } from '../lib/credit'
-import { type AgentMetrics, type CompletionRef, computeScore, type ScoreBreakdown } from '../lib/score'
+import { fetchLogsByTopic, padAddressTopic, type ExplorerLog } from '../lib/explorer'
+import { type AgentMetrics, deriveReputation, type JobFact, type ScoreBreakdown, type SettlementFact } from '@shared/score'
 
 const JOB_CREATED_TOPIC = keccak256(toHex('JobCreated(uint256,address,address,address,uint256,address)'))
 const PAYMENT_RELEASED_TOPIC = keccak256(toHex('PaymentReleased(uint256,address,uint256)'))
+const JOB_REJECTED_TOPIC = keccak256(toHex('JobRejected(uint256,address,bytes32)'))
 
 // Bound work for arbitrary addresses; our demo agents sit well under this.
 // Two chunks of 100 => two eth_calls, comfortably inside the RPC burst budget.
@@ -59,6 +59,14 @@ function decodeAmount(data: `0x${string}`): bigint {
   return BigInt(data.slice(0, 66))
 }
 
+const isEvent = (log: ExplorerLog, topic: string) => log.topics[0]?.toLowerCase() === topic.toLowerCase()
+const settlementOf = (log: ExplorerLog, amount6?: bigint): SettlementFact => ({
+  jobId: BigInt(log.topics[1] as string),
+  block: BigInt(log.blockNumber),
+  timestamp: Number(BigInt(log.timeStamp)),
+  amount6,
+})
+
 // Prefer the backend API for the reputation core (score, metrics, job history);
 // registry profile + verdicts are quick direct reads. Falls back entirely to
 // chain if the API is unset or unreachable.
@@ -70,6 +78,9 @@ async function loadAgentData(address: Address): Promise<AgentData> {
         loadRegistryProfile(address),
         loadVerdicts(address),
       ])
+      // An API build from before time decay lacks the decay breakdown — score
+      // in the browser instead (same shared module) rather than show half of it.
+      if (!api.breakdown?.undecayed) throw new Error('API predates time decay')
       const metrics: AgentMetrics = {
         totalJobs: api.metrics.totalJobs,
         completed: api.metrics.completed,
@@ -98,12 +109,33 @@ async function loadAgentData(address: Address): Promise<AgentData> {
   return loadAgentDataFromChain(address)
 }
 
+/** JobRejected indexes the rejector, not the provider: look each rejection up
+ * under the job's evaluator, then under its client (mirrors the API). */
+async function fetchRejections(rejected: JobRow[]): Promise<SettlementFact[]> {
+  const found = new Map<string, SettlementFact>()
+  for (const party of ['evaluator', 'client'] as const) {
+    const pending = rejected.filter((j) => !found.has(j.jobId.toString()))
+    const wanted = new Set(pending.map((j) => j.jobId.toString()))
+    for (const who of new Set(pending.map((j) => getAddress(j[party])))) {
+      for (const log of await fetchLogsByTopic(ERC8183_ADDRESS, 2, padAddressTopic(who))) {
+        const s = settlementOf(log)
+        if (isEvent(log, JOB_REJECTED_TOPIC) && wanted.has(s.jobId.toString())) found.set(s.jobId.toString(), s)
+      }
+    }
+  }
+  return [...found.values()]
+}
+
 async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   const topic = padAddressTopic(address)
 
+  // The reference block: every age is measured against its timestamp.
+  const head = await publicClient.getBlock()
+  const ref = { block: head.number, timestamp: Number(head.timestamp) }
+
   // Jobs where this address is the provider (JobCreated topic3 = provider).
   const createdLogs = (await fetchLogsByTopic(ERC8183_ADDRESS, 3, topic)).filter(
-    (log) => log.topics[0]?.toLowerCase() === JOB_CREATED_TOPIC.toLowerCase(),
+    (log) => isEvent(log, JOB_CREATED_TOPIC) && BigInt(log.blockNumber) <= ref.block,
   )
 
   const truncated = createdLogs.length > MAX_JOBS
@@ -128,9 +160,11 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
   )
 
   const jobs: JobRow[] = []
+  const facts: JobFact[] = []
   scoped.forEach((log, i) => {
     const job = jobStates[i]
     if (!job) return
+    const createdAt = Number(BigInt(log.timeStamp))
     jobs.push({
       jobId: jobIds[i],
       status: job.status as JobStatusValue,
@@ -139,17 +173,28 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
       evaluator: job.evaluator,
       description: job.description,
       expiredAt: job.expiredAt,
-      createdAt: Number(BigInt(log.timeStamp)),
+      createdAt,
       createdTx: log.transactionHash,
+    })
+    facts.push({
+      jobId: jobIds[i],
+      client: job.client,
+      budget6: job.budget,
+      description: job.description,
+      status: job.status,
+      createdBlock: BigInt(log.blockNumber),
+      createdAt,
+      expiredAt: Number(job.expiredAt),
     })
   })
   jobs.sort((a, b) => Number(b.jobId - a.jobId))
 
-  // Exact lifetime earnings: PaymentReleased where provider = address (topic2).
-  const paymentLogs = (await fetchLogsByTopic(ERC8183_ADDRESS, 2, topic)).filter(
-    (log) => log.topics[0]?.toLowerCase() === PAYMENT_RELEASED_TOPIC.toLowerCase(),
-  )
-  const earnings6 = paymentLogs.reduce((sum, log) => sum + decodeAmount(log.data), 0n)
+  // Settlement times: PaymentReleased where provider = address (topic2), which
+  // also gives exact lifetime earnings; JobRejected is looked up per rejector.
+  const payments = (await fetchLogsByTopic(ERC8183_ADDRESS, 2, topic))
+    .filter((log) => isEvent(log, PAYMENT_RELEASED_TOPIC))
+    .map((log) => settlementOf(log, decodeAmount(log.data)))
+  const rejections = await fetchRejections(jobs.filter((j) => j.status === JobStatus.Rejected))
 
   // Rejections overturned by a second-arbiter appeal (AgentScoreAppeals) are not
   // penalized. A failed read leaves the set empty, so scoring falls back exactly.
@@ -168,48 +213,17 @@ async function loadAgentDataFromChain(address: Address): Promise<AgentData> {
     }
   }
 
-  let completed = 0
-  let rejected = 0
-  let overturnedRejections = 0
-  let expired = 0
-  let expiredUnfunded = 0
-  let settled6 = 0n
-  const completions: CompletionRef[] = []
-  // Ascending jobId order for deterministic client-diversity weights; collateral
-  // mirror jobs are an escrow mechanism, not work — excluded entirely.
-  for (const job of [...jobs].reverse()) {
-    if (isCollateralJob(job.description)) continue
-    switch (job.status) {
-      case JobStatus.Completed:
-        completed += 1
-        settled6 += job.budget6
-        completions.push({ client: job.client, budget6: job.budget6 })
-        break
-      case JobStatus.Rejected:
-        if (overturnedSet.has(job.jobId.toString())) overturnedRejections += 1
-        else rejected += 1
-        break
-      case JobStatus.Expired:
-        expired += 1
-        if (job.budget6 === 0n) expiredUnfunded += 1
-        break
-    }
-  }
-
-  const metrics: AgentMetrics = {
-    totalJobs: jobs.length,
-    completed,
-    rejected,
-    expired,
-    expiredUnfunded,
-    settled6,
-    earnings6,
-  }
+  // Same derivation as the API: the shared module turns these facts into the
+  // score as of the reference block (collateral mirror jobs excluded there).
+  const { breakdown, metrics, overturnedRejections } = deriveReputation(
+    { jobs: facts, payments, rejections, overturned: overturnedSet },
+    ref,
+  )
 
   const profile = await loadRegistryProfile(address)
   const verdicts = await loadVerdicts(address)
 
-  return { address, metrics, breakdown: computeScore(metrics, completions), overturnedRejections, jobs, truncated, profile, verdicts }
+  return { address, metrics, breakdown, overturnedRejections, jobs, truncated, profile, verdicts }
 }
 
 async function loadRegistryProfile(address: Address): Promise<RegistryProfile> {

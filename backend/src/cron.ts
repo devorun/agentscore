@@ -20,9 +20,10 @@
 import { createPublicClient, createWalletClient, getAddress, http, keccak256, toHex, type Address, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { erc8183Abi, registryAbi } from './lib/abi.js'
-import { ADVANCE_PCT, COLLATERAL_PCT, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
+import { ADVANCE_PCT, COLLATERAL_PCT, creditTermsEarned, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
 import { enrich, enrichTampered, hashOutput, verify, type WalletRow } from './lib/enrichment.js'
 import { isJudgedJob } from './lib/judged.js'
+import { computeReputation } from './lib/reputation.js'
 import inputRows from '../data/input/wallets.json'
 
 interface Env {
@@ -222,9 +223,33 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
     }
   }
 
+  /** Credit terms must be earned: the agent's score as it stood at the hire
+   * block, computed by the shared scoring module (the same code the API
+   * serves) — so the verdict is identical whenever this tick runs. A failed
+   * read means "not verifiable yet", never a pass. */
+  const hireScores = new Map<bigint, { score: number; block: string } | null>()
+  async function creditEarned(jobId: bigint, terms: TermsMarker): Promise<boolean> {
+    if (terms.tier !== 'credit') return true
+    if (!hireScores.has(jobId)) {
+      const rep = await computeReputation(AGENT, { atJob: jobId }).catch(() => null)
+      hireScores.set(jobId, rep ? { score: rep.score, block: rep.breakdown.asOf.block } : null)
+    }
+    const atHire = hireScores.get(jobId)
+    if (!atHire) {
+      report.skipped.push(`#${jobId} hire-block score unavailable, retry next tick`)
+      return false
+    }
+    if (!creditTermsEarned(terms, atHire.score)) {
+      report.skipped.push(`#${jobId} credit terms not earned: score ${atHire.score} at block ${atHire.block}`)
+      return false
+    }
+    return true
+  }
+
   /** Credit-terms gate (mirrors the local worker): no work until verified. */
-  async function termsSatisfied(job: JobView, terms: TermsMarker): Promise<boolean> {
+  async function termsSatisfied(jobId: bigint, job: JobView, terms: TermsMarker): Promise<boolean> {
     if (terms.tier === 'credit') {
+      if (!(await creditEarned(jobId, terms))) return false
       if (!terms.advanceTx) return false
       const rcpt = await pub.getTransactionReceipt({ hash: terms.advanceTx }).catch(() => null)
       const needed = (price6 * BigInt(ADVANCE_PCT)) / 100n
@@ -272,10 +297,12 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
     const terms = parseTermsMarker(job.description)
 
     if (job.status === JobStatus.Open && job.budget === 0n) {
+      // Never price a job on credit terms the agent had not earned at hire.
+      if (terms && !(await creditEarned(jobId, terms))) continue
       const escrow6 = terms?.tier === 'credit' ? (price6 * BigInt(100 - ADVANCE_PCT)) / 100n : price6
       await send(agent, 'agent setBudget', jobId, { address: ERC8183, abi: erc8183Abi, functionName: 'setBudget', args: [jobId, escrow6, '0x'] })
     } else if (job.status === JobStatus.Funded) {
-      if (terms && !(await termsSatisfied(job, terms))) {
+      if (terms && !(await termsSatisfied(jobId, job, terms))) {
         report.skipped.push(`#${jobId} terms not yet satisfied`)
         continue
       }

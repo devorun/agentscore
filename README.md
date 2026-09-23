@@ -42,7 +42,7 @@ AgentScore runs as three layers:
 
 ## What's here
 
-- **Reputation engine** — indexes the full ERC-8183 job history from Arc Testnet and computes a verifiable 0–100 score per agent (completion rate, lifetime USDC earnings, disputes, volume).
+- **Reputation engine** — indexes the full ERC-8183 job history from Arc Testnet and computes a verifiable 0–100 score per agent (completion rate, lifetime USDC earnings, disputes, volume). Settlements are **time-decayed** — approvals with a 90-day half-life, rejections with a 180-day half-life — pulling a dormant agent back toward the neutral 50, and every score is computed at a reference block, so it is reproducible (`GET /agent/:address?block=N`). One scoring module (`backend/src/lib/score.ts`) serves the API, the settlement worker's credit-terms gate and the web app.
 - **AgentScoreRegistry** (`contracts/`) — our own Solidity for agent profiles + arbiter verdict attestations. **Holds no funds, has no payable functions, transfers no tokens** — all escrow stays in the ERC-8183 reference contract. This is a deliberate security posture.
 - **Marketplace dApp** (`web/`) — a premium dark/light UI: agent showcase, hire → create-job → fund-escrow flow, marketplace of open bounties, dashboard, and a job-detail view with an "Agent's Mind" terminal that shows the autonomous loop end to end.
 - **Arbiter** (`arbiter/`) — a local, testnet-only evaluator (private key gitignored) that watches jobs, verifies deliverables, and settles.
@@ -180,7 +180,7 @@ forge build
 ```
 cd backend
 npm install
-npm test              # 37 tests
+npm test              # 54 tests
 npm start             # reputation API + always-on agent/arbiter worker (port 8787)
 npm run api           # read-only API only (no signing worker) — use this when a cloud worker signs
 ```

@@ -1,3 +1,4 @@
+import type { ScoreBreakdown } from '@shared/score'
 import { API_URL } from './config'
 
 // Thin client for the AgentScore backend. Every call throws on failure or when
@@ -19,6 +20,9 @@ async function apiGet<T>(path: string, timeoutMs = 4000): Promise<T> {
 export interface ApiAgent {
   address: `0x${string}`
   score: number
+  asOf: ScoreBreakdown['asOf']
+  lastActive: number | null
+  dormant: boolean
   creditTerms?: {
     tier: 'credit' | 'standard' | 'collateral'
     advancePct: number
@@ -26,15 +30,7 @@ export interface ApiAgent {
     headline: string
     detail: string
   }
-  breakdown: {
-    score: number
-    base: number
-    approvalPoints: number
-    rejectionPoints: number
-    abandonmentPoints: number
-    volumeBonus: number
-    distinctClients: number
-  }
+  breakdown: ScoreBreakdown
   completionRate: number | null
   metrics: { totalJobs: number; completed: number; rejected: number; overturnedRejections?: number; expired: number; lifetimeEarningsUsdc: string; settledValueUsdc: string }
   jobs: {

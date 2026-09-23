@@ -15,7 +15,8 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@shared/score": ["../backend/src/lib/score.ts"]
     }
   },
   "include": ["src"]

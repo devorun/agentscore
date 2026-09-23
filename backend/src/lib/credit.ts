@@ -11,6 +11,9 @@
 // arbiter rejects it (refunds the agent). Terms are recorded in the main job's
 // onchain description via the [TERMS ...] marker — publicly auditable, no new
 // contract. Enforcement is orchestration + self-interest, not chain law.
+import { isCollateralJob } from './score.js'
+
+export { isCollateralJob }
 
 export type CreditTier = 'credit' | 'standard' | 'collateral'
 
@@ -64,10 +67,6 @@ export function collateralDescription(agent: string, collateralUsdc: string): st
   return `[COLLATERAL] Slashable collateral of ${collateralUsdc} USDC posted by agent ${agent}. Released back on settlement of the linked main job; forfeited to the client if that job is rejected.`
 }
 
-export function isCollateralJob(description: string): boolean {
-  return /^\s*\[COLLATERAL\]/i.test(description)
-}
-
 export interface TermsMarker {
   tier: CreditTier
   score?: number
@@ -102,4 +101,16 @@ export function parseTermsMarker(description: string): TermsMarker | null {
   const collateral = fields.get('collateral')
   if (collateral && /^#\d+$/.test(collateral)) marker.collateralJobId = BigInt(collateral.slice(1))
   return marker
+}
+
+/**
+ * Credit terms must be EARNED: a `tier=credit` claim is honored only when the
+ * agent's score at the hire block — computed by the shared scoring module, the
+ * same code the API serves — reaches the credit band. Only credit relaxes the
+ * client's protection (part of the price leaves escrow), so only credit is
+ * score-gated; collateral is verified on its own, and a manual hire of a
+ * collateral-tier agent proceeds on full escrow by design.
+ */
+export function creditTermsEarned(terms: TermsMarker, scoreAtHire: number): boolean {
+  return terms.tier !== 'credit' || creditTerms(scoreAtHire).tier === 'credit'
 }
