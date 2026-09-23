@@ -109,15 +109,35 @@ interface TickReport {
 // the hot path when a transaction is actually sent.
 
 /** One JSON-RPC call; throws on an RPC error (callers decide what that means). */
-async function rpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
+async function rpcOnce<T>(url: string, method: string, params: unknown[]): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   })
-  const body = (await res.json()) as { result?: T; error?: { message?: string } }
+  const body = (await res.json().catch(() => ({}))) as { result?: T; error?: { message?: string } }
   if (body.result === undefined) throw new Error(`${method}: ${body.error?.message ?? `HTTP ${res.status}`}`)
   return body.result
+}
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** A read with a light retry: public endpoints rate-limit shared Workers IPs, so
+ * try the primary twice (backing off — waiting costs no CPU), then the
+ * fallback endpoint once. An execution revert is final and never retried. */
+async function rpc<T>(urls: readonly string[], method: string, params: unknown[]): Promise<T> {
+  const plan = [urls[0], urls[0], urls[urls.length - 1]]
+  let last: unknown
+  for (let i = 0; i < plan.length; i++) {
+    try {
+      return await rpcOnce<T>(plan[i], method, params)
+    } catch (e) {
+      last = e
+      if (/revert/i.test(String((e as Error).message))) break
+      if (i < plan.length - 1) await pause(300 * (i + 1))
+    }
+  }
+  throw last
 }
 
 const word = (hex: string, i: number) => hex.slice(2 + i * 64, 66 + i * 64)
@@ -145,9 +165,9 @@ export function encodeAggregate3(calls: { target: Address; callData: Hex }[]): H
 
 /** Multicall3.aggregate3 with allowFailure: one eth_call for many reads.
  * Returns each call's returnData, or undefined where the call failed. */
-export async function aggregate3(url: string, calls: { target: Address; callData: Hex }[]): Promise<(Hex | undefined)[]> {
+export async function aggregate3(urls: readonly string[], calls: { target: Address; callData: Hex }[]): Promise<(Hex | undefined)[]> {
   if (calls.length === 0) return []
-  const raw = await rpc<Hex>(url, 'eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest'])
+  const raw = await rpc<Hex>(urls, 'eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest'])
   // Result[] (bool success, bytes returnData): array offset, length, then one
   // offset per element (relative to the element-offset area).
   const at = Number(uint(word(raw, 0))) / 32
@@ -204,7 +224,7 @@ async function logPages(
     const from = to > LOG_STEP ? to - LOG_STEP + 1n : 0n
     try {
       const params = [{ address: ERC8183, topics, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]
-      found.push(...(await rpc<{ topics: Hex[]; data: Hex }[]>(url, 'eth_getLogs', params)))
+      found.push(...(await rpcOnce<{ topics: Hex[]; data: Hex }[]>(url, 'eth_getLogs', params)))
       if (enough(found)) break
     } catch {
       /* page unavailable this tick — the counter tail still covers new jobs */
@@ -240,6 +260,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   const chain = chainOf(env.ARC_RPC)
   const pub = createPublicClient({ chain, transport: http(env.ARC_RPC) })
   const logsRpc = env.LOGS_RPC || DEFAULT_LOGS_RPC
+  const reads = [env.ARC_RPC, logsRpc] as const // dRPC first; the official RPC as fallback
   const AGENT = getAddress(env.AGENT_ADDRESS || DEFAULT_AGENT)
   const ARBITER = getAddress(env.ARBITER_ADDRESS || DEFAULT_ARBITER)
   const wallets = new Map<Address, ReturnType<typeof createWalletClient>>()
@@ -256,8 +277,8 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
 
   const report: TickReport = { head: '0', pages: 0, discovered: 0, scanned: 0, sends: [], skipped: [] }
   const [counterHex, blockHex] = await Promise.all([
-    rpc<Hex>(env.ARC_RPC, 'eth_call', [{ to: ERC8183, data: JOB_COUNTER_CALL }, 'latest']),
-    rpc<Hex>(env.ARC_RPC, 'eth_blockNumber', []),
+    rpc<Hex>(reads, 'eth_call', [{ to: ERC8183, data: JOB_COUNTER_CALL }, 'latest']),
+    rpc<Hex>(reads, 'eth_blockNumber', []),
   ])
   const head = BigInt(counterHex)
   const blockHead = BigInt(blockHex)
@@ -281,7 +302,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   // attestation-repair path) is read only for OUR settled jobs, in a second
   // small multicall — most scanned ids are other agents' jobs.
   const idArg = (id: bigint) => id.toString(16).padStart(64, '0')
-  const states = (await aggregate3(env.ARC_RPC, ids.map((id) => ({ target: ERC8183, callData: `${GET_JOB_SELECTOR}${idArg(id)}` as Hex })))).map(decodeJob)
+  const states = (await aggregate3(reads, ids.map((id) => ({ target: ERC8183, callData: `${GET_JOB_SELECTOR}${idArg(id)}` as Hex })))).map(decodeJob)
   report.scanned = ids.length
   const agentLc = AGENT.toLowerCase()
   const arbiterLc = ARBITER.toLowerCase()
@@ -294,7 +315,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
     })
   const attestedAt = new Map<number, boolean>()
   if (settledIdx.length > 0) {
-    const flags = await aggregate3(env.ARC_RPC, settledIdx.map((i) => ({ target: REGISTRY, callData: `${JOB_ATTESTED_SELECTOR}${idArg(ids[i])}` as Hex })))
+    const flags = await aggregate3(reads, settledIdx.map((i) => ({ target: REGISTRY, callData: `${JOB_ATTESTED_SELECTOR}${idArg(ids[i])}` as Hex })))
     // An unreadable flag counts as attested: never re-attest on a failed read.
     settledIdx.forEach((i, k) => attestedAt.set(i, flags[k] === undefined ? true : uint(word(flags[k] as Hex, 0)) === 1n))
   }

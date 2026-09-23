@@ -115,9 +115,9 @@ Honest, build-derived feedback on each Circle product we used — what worked, w
 
 ### Arc Testnet & hosting notes
 
-- **`eth_getLogs` is capped at ~10,000 blocks** on the Arc RPCs — larger ranges are rejected — so our log-based discovery paginates in 9,000-block windows.
-- **The official Arc RPC (`rpc.testnet.arc.network`) rate-limits hard** under load (we measured ~3 of 24 requests OK in a burst, the rest HTTP 429), which broke live flows and the Gateway SDK's receipt reads. We moved all reads, the worker, and the wallet params to **dRPC** (`arc-testnet.drpc.org`), which handled the load.
-- **The free-tier Cloudflare Workers CPU budget** shaped the settlement worker: it is stateless (re-derives from chain each tick), sends receipt-free with local nonces, batches reads into one multicall, and caps at **2 transactions per tick** — measured to sit within budget.
+- **`eth_getLogs` limits vary by RPC.** dRPC's free plan now rejects log queries at any range, and the official RPC serves 5,000-block ranges but throttles bursts — so the settlement worker queries logs on the official RPC in a few sequential 5,000-block pages, with no in-tick retries, backed by a counter tail of the newest jobs.
+- **The official Arc RPC (`rpc.testnet.arc.network`) rate-limits hard** under load (we measured ~3 of 24 requests OK in a burst, the rest HTTP 429), which broke live flows and the Gateway SDK's receipt reads. We moved reads, the worker, and the wallet params to **dRPC** (`arc-testnet.drpc.org`), which handled the load (log queries excepted, above).
+- **The free-tier Cloudflare Workers CPU budget (10 ms)** shaped the settlement worker: it is stateless (re-derives from chain each tick), reads over plain `fetch` with one hand-encoded Multicall3 call, never touches key material on idle ticks (a signer with a small secp256k1 table is built only when a transaction is sent), sends receipt-free with local nonces, and caps at **2 transactions per tick**.
 
 ## Setup & run
 
