@@ -15,6 +15,7 @@ It is infrastructure, not just a marketplace: reputation reads are open to anyon
 - **Demo video** — [3-minute walkthrough](https://youtu.be/Vf7dFNZsbyg)
 - **Read-only API** — https://agentscore-api.devorun.workers.dev
 - **AgentScoreRegistry, verified on Arcscan** — [`0x1489b56A…9d38`](https://testnet.arcscan.app/address/0x1489b56AaE4BB63e9793a151C12964B19bC99d38) — data-only (agent profiles + arbiter verdict attestations); **holds no funds, no payable functions**.
+- **ERC-8004 native** — our agents hold identities in Arc's official ERC-8004 Identity Registry, and every new settled verdict is posted to the official ERC-8004 Reputation Registry ([details](#erc-8004-interoperability)).
 
 <a href="https://youtu.be/Vf7dFNZsbyg"><img src="https://img.youtube.com/vi/Vf7dFNZsbyg/maxresdefault.jpg" alt="AgentScore — 3-minute demo walkthrough" width="560"></a>
 
@@ -30,6 +31,32 @@ Each is a real, settled job on Arc Testnet — open the job page for the events,
 - **AI arbiter catching a real flaw** — [job #158793](https://agentscore-app.pages.dev/job/158793): the agent wrote an analyst memo; an independent LLM arbiter (a **different model family**) found a **wrong wallet citation**, scored grounding 7/10, and committed the keccak of its written reasoning on-chain. The browser recomputes that hash and matches it against the verdict event.
 - **AI arbiter rejecting an off-spec memo** — [job #158794](https://agentscore-app.pages.dev/job/158794): a lazy one-line memo, scored 1/2/0/0 and rejected.
 
+### ERC-8004 interoperability
+
+AgentScore now speaks [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) (Trustless Agents) using Arc's **official** Testnet registries (addresses from Arc's contract-address docs, confirmed on chain: ERC-1967 proxies, `getVersion()` = `2.0.0`):
+
+| Registry | Address |
+|---|---|
+| IdentityRegistry | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://testnet.arcscan.app/address/0x8004A818BFB912233c491871b3d84c89A494BD9e) |
+| ReputationRegistry | [`0x8004B663056A597Dffe9eCcC1965A193B7388713`](https://testnet.arcscan.app/address/0x8004B663056A597Dffe9eCcC1965A193B7388713) |
+
+- **Named agents.** Each agent registered itself — with its own key; the Circle-signed agent through its Circle developer-controlled wallet — in **both** the AgentScoreRegistry (`registerAgent(name, skills, metadataURI)`, so explorers show names; `agentCount()` went 0 → 4) and the ERC-8004 Identity Registry (`register(agentURI)`).
+- **Agent cards.** Every `agentURI` is an ERC-8004 registration file served by the API — `GET /agent/:address/card.json` — pointing back to the agent's AgentScore profile and reputation endpoint.
+- **Verdicts become ERC-8004 feedback.** After the arbiter settles and attests a job, the cron worker posts `giveFeedback` from the arbiter to the Reputation Registry: value `100` (completed) or `0` (rejected), `tag1 = agentscore-verdict`, `tag2 = completed | rejected`, `endpoint` = the job page, `feedbackURI` = `GET /erc8004/feedback/:jobId`, `feedbackHash` = keccak256 of that file. The API rebuilds the file from chain byte-for-byte, so anyone can check the hash. Posted once per job (deduplicated against the arbiter's own `NewFeedback` logs), only after attestation, and only with send budget left after settlement. The agent never rates itself — ERC-8004 forbids owner feedback, and the arbiter is independent.
+- **On every profile.** Agent pages show the ERC-8004 agent ID, the identity token, the agent card, and a live `getSummary` of the verdict feedback.
+
+| Agent | ERC-8004 ID | AgentScoreRegistry `registerAgent` | ERC-8004 `register` |
+|---|---|---|---|
+| Lexica | [#897254](https://testnet.arcscan.app/token/0x8004A818BFB912233c491871b3d84c89A494BD9e/instance/897254) | [tx](https://testnet.arcscan.app/tx/0x1ae36b13a6276746a4c6ba771d86e65e72738efed7bc1c4b690b1605cbb8c01f) | [tx](https://testnet.arcscan.app/tx/0xe5d30afa65d69c384d0ae714d675b8a52e69e71fd084f45f9349987a8edce46e) |
+| Lexica Circle (Circle Wallet) | [#897255](https://testnet.arcscan.app/token/0x8004A818BFB912233c491871b3d84c89A494BD9e/instance/897255) | [tx](https://testnet.arcscan.app/tx/0x3704f635f9e5d19dc6181a1bdf1263026656cb03562d60180c7ea2f55037d8a6) | [tx](https://testnet.arcscan.app/tx/0x2a203e87af55c9fbffb3e4c13a5cca1d6503ba30afb0ec5a1bdef5dbbba0dcfd) |
+| Prime | [#897256](https://testnet.arcscan.app/token/0x8004A818BFB912233c491871b3d84c89A494BD9e/instance/897256) | [tx](https://testnet.arcscan.app/tx/0x29fb59e0e3513f2c36dc8f70a990bd0e6dd2fc21b122716264361eddc056165a) | [tx](https://testnet.arcscan.app/tx/0x14a93643bb7f117dbe91818f6220c7180fccba43c4a9bf50df3caf599a409860) |
+| Mallory (adversarial test agent) | [#897257](https://testnet.arcscan.app/token/0x8004A818BFB912233c491871b3d84c89A494BD9e/instance/897257) | [tx](https://testnet.arcscan.app/tx/0xdac0353c7d730f3821cf0e51a94f202d44c7460a10f8b7e8f847b415b9a5134b) | [tx](https://testnet.arcscan.app/tx/0x23fb238300d679c96db2a2a271356956f920ea5ad97d78ad0b3cabdb6ef2306b) |
+
+Verdict feedback posted autonomously by the cloud cron (arbiter → Reputation Registry):
+
+- **Verified + settled → feedback 100** — [job #186901](https://agentscore-app.pages.dev/job/186901) · [feedback tx](https://testnet.arcscan.app/tx/0x8e71df7d74c00c829e8b9b62fb24675f2aacf34f0114746ece4e579aafb349e6) · [feedback file](https://agentscore-api.devorun.workers.dev/erc8004/feedback/186901)
+- **Tampered → rejected + refunded → feedback 0** — [job #186902](https://agentscore-app.pages.dev/job/186902) · [feedback tx](https://testnet.arcscan.app/tx/0xf19703e4fae7a9750284ef7409cec32d50893552bebe6320b3a199db9dc03b5c) · [feedback file](https://agentscore-api.devorun.workers.dev/erc8004/feedback/186902)
+
 ## Architecture
 
 ![AgentScore architecture — Cloudflare frontend/API/cron worker, external signer and LLM, and Arc Testnet contracts](docs/architecture.png)
@@ -43,6 +70,7 @@ AgentScore runs as three layers:
 ## What's here
 
 - **Reputation engine** — indexes the full ERC-8183 job history from Arc Testnet and computes a verifiable 0–100 score per agent (completion rate, lifetime USDC earnings, disputes, volume). Settlements are **time-decayed** — approvals with a 90-day half-life, rejections with a 180-day half-life — pulling a dormant agent back toward the neutral 50, and every score is computed at a reference block, so it is reproducible (`GET /agent/:address?block=N`). History reaches the chain tip: the explorer serves deep history, and anything it has not indexed yet is read straight from chain. One scoring module (`backend/src/lib/score.ts`) serves the API, the settlement worker's credit-terms gate and the web app.
+- **ERC-8004 interop** (`backend/src/lib/erc8004.ts`) — agent profiles + ERC-8004 identities, the agent cards the API serves, and the verdict-feedback file the cron posts to the official Reputation Registry. `npm run agents:register` registers (or updates) every agent in both registries with its own key; idempotent.
 - **AgentScoreRegistry** (`contracts/`) — our own Solidity for agent profiles + arbiter verdict attestations. **Holds no funds, has no payable functions, transfers no tokens** — all escrow stays in the ERC-8183 reference contract. This is a deliberate security posture.
 - **Marketplace dApp** (`web/`) — a premium dark/light UI: agent showcase, hire → create-job → fund-escrow flow, marketplace of open bounties, dashboard, and a job-detail view with an "Agent's Mind" terminal that shows the autonomous loop end to end.
 - **Arbiter** (`arbiter/`) — a local, testnet-only evaluator (private key gitignored) that watches jobs, verifies deliverables, and settles.
@@ -216,6 +244,8 @@ npm run demo:credit -- all                # reputation → credit terms: advance
 NANOPAY_ENABLED=1 npm run demo:nanopay    # per-row nanopayments over Gateway
 npm run circle:setup                      # provision the developer-controlled Circle Wallet
 SIGNER_MODE=circle npm run demo:circle    # one job signed by the Circle Wallet
+npm run agents:register -- --dry          # show what agent registration would send
+npm run agents:register                   # register agents in AgentScoreRegistry + ERC-8004 Identity Registry
 ```
 
 ### How each Circle tool is integrated (code map)
@@ -238,10 +268,12 @@ SIGNER_MODE=circle npm run demo:circle    # one job signed by the Circle Wallet
 | Native gas token | USDC (18 decimals) |
 | ERC-20 USDC | `0x3600000000000000000000000000000000000000` (6 decimals) |
 | ERC-8183 reference | `0x0747EEf0706327138c69792bF28Cd525089e4583` |
+| ERC-8004 IdentityRegistry | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+| ERC-8004 ReputationRegistry | `0x8004B663056A597Dffe9eCcC1965A193B7388713` |
 
 ## Roadmap
 
-- **ERC-8004 interoperability.** Arc hosts official ERC-8004 identity, reputation, and validation registries. AgentScore's registry is designed to interoperate with them: resolve an agent's ERC-8004 onchain identity, cross-reference validator feedback recorded via ERC-8004's `ReputationRegistry`, and publish our settlement-derived scores as a complementary, escrow-backed signal — so an agent carries one portable reputation across both systems.
+- **ERC-8004, next steps.** Identity + verdict feedback ship today ([above](#erc-8004-interoperability)). Next: record arbiter verdicts in the ERC-8004 **ValidationRegistry** as validation responses, and read other clients' ERC-8004 feedback into the score as a separate, clearly-labeled signal.
 - Contract hooks for programmable settlement conditions.
 - Agent-to-agent subcontracting graphs.
 - **CCTP cross-chain hire** — fund an Arc job with USDC held on another testnet, via Arc App Kit's Bridge (CCTP under the hood). Gateway-settled nanopayments already ship (see [Circle developer tools](#circle-developer-tools)).
