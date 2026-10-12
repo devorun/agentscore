@@ -43,6 +43,16 @@ export interface AgentReputation {
   overturnedRejections: number
   jobs: JobRow[]
   truncated: boolean
+  /** How far onchain history was read: the chain tip, the explorer's index,
+   * and the last block whose logs are all in hand (plus why, if short). */
+  coverage: Coverage
+}
+
+export interface Coverage {
+  chainTip: string
+  explorerIndexed: string
+  readTo: string
+  backfillError?: string
 }
 
 export interface ReputationOptions {
@@ -65,12 +75,13 @@ const settlementOf = (l: ExplorerLog, amount6?: bigint): SettlementFact => ({
 /** How far onchain history is readable right now: the explorer's index, plus
  * whatever the chain backfill reads beyond it. `covered` is the last block
  * whose logs are all in hand — the chain tip unless a backfill page failed. */
-async function history(): Promise<{ covered: bigint; gapLogs: ExplorerLog[] }> {
+async function history(): Promise<{ covered: bigint; gapLogs: ExplorerLog[]; coverage: Coverage }> {
   const [tipHex, indexed] = await Promise.all([rpc<Hex>(READ_RPCS, 'eth_blockNumber', []), fetchIndexedHead()])
   const tip = BigInt(tipHex)
-  if (indexed >= tip) return { covered: tip, gapLogs: [] }
-  const { logs, upTo } = await fetchChainLogs(indexed, tip)
-  return { covered: upTo, gapLogs: logs }
+  const { logs, upTo, error } = indexed >= tip ? { logs: [], upTo: tip, error: undefined } : await fetchChainLogs(indexed, tip)
+  const coverage: Coverage = { chainTip: tip.toString(), explorerIndexed: indexed.toString(), readTo: upTo.toString() }
+  if (error) coverage.backfillError = error
+  return { covered: upTo, gapLogs: logs, coverage }
 }
 
 async function blockTimestamp(block: bigint): Promise<number> {
@@ -107,7 +118,7 @@ export async function computeReputation(rawAddress: string, opts: ReputationOpti
   const topic = padAddressTopic(address)
   const topicLc = topic.toLowerCase()
 
-  const [indexedCreated, { covered, gapLogs }] = await Promise.all([fetchLogsByTopic(ERC8183_ADDRESS, 3, topic), history()])
+  const [indexedCreated, { covered, gapLogs, coverage }] = await Promise.all([fetchLogsByTopic(ERC8183_ADDRESS, 3, topic), history()])
   const createdLogs = mergeLogs(indexedCreated, gapLogs.filter((l) => l.topics[3]?.toLowerCase() === topicLc)).filter((l) =>
     isEvent(l, JOB_CREATED_TOPIC),
   )
@@ -182,5 +193,5 @@ export async function computeReputation(rawAddress: string, opts: ReputationOpti
   const overturned = await fetchOverturnedRejections(address, ref.block, gapLogs)
 
   const { breakdown, metrics, overturnedRejections } = deriveReputation({ jobs: facts, payments, rejections, overturned }, ref)
-  return { address, score: breakdown.score, breakdown, metrics, completionRate: completionRate(metrics), overturnedRejections, jobs, truncated }
+  return { address, score: breakdown.score, breakdown, metrics, completionRate: completionRate(metrics), overturnedRejections, jobs, truncated, coverage }
 }

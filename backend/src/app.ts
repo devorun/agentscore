@@ -92,6 +92,7 @@ app.get('/agent/:address', async (c) => {
         tx: tx(j.createdTx),
       })),
       truncated: r.truncated,
+      coverage: r.coverage,
     })
   } catch (e) {
     return c.json({ error: 'invalid address or read failed', detail: String(e).slice(0, 160) }, 400)
