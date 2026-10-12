@@ -79,6 +79,24 @@ test('marketplace filters work and job links route', async ({ page }) => {
   await expect(page).toHaveURL(/\/job\//)
 })
 
+test('registered agent shows its ERC-8004 identity', async ({ page }) => {
+  await page.goto(`/agent/${LIVE_AGENT}`)
+  await expect(page.getByRole('heading', { name: 'ERC-8004 identity' })).toBeVisible()
+  await expect(page.getByText('Agent #897254')).toBeVisible()
+  await expect(page.getByRole('link', { name: /Identity token/ })).toHaveAttribute(
+    'href',
+    'https://testnet.arcscan.app/token/0x8004A818BFB912233c491871b3d84c89A494BD9e/instance/897254',
+  )
+  await expect(page.getByRole('link', { name: /Agent card/ })).toHaveAttribute('href', new RegExp(`/agent/${LIVE_AGENT}/card\\.json$`))
+})
+
+test('an unregistered address shows no ERC-8004 card', async ({ page }) => {
+  await page.goto(`/agent/${REAL_ADDR}`)
+  // The card renders with the header (no data wait), so absence is decisive here.
+  await expect(page.getByText('Agent record')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'ERC-8004 identity' })).toHaveCount(0)
+})
+
 test('arbiter copy button works', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.goto('/arbiter')

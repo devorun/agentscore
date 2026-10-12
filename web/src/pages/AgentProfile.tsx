@@ -1,10 +1,12 @@
 import { useParams } from 'react-router-dom'
-import { useAccount } from 'wagmi'
+import { useAccount, useReadContract } from 'wagmi'
 import { ArrowUpRight } from 'lucide-react'
 import { useAgentData, type AgentData } from '@/hooks/useAgentData'
 import { creditTerms, type CreditTier } from '@/lib/credit'
 import { completionRate, type ScoreBreakdown } from '@shared/score'
-import { JobStatus } from '@/lib/config'
+import { ARBITER_ADDRESS, JobStatus } from '@/lib/config'
+import { reputationAbi } from '@/lib/abi'
+import { cardUrl, FEEDBACK_TAG, identityTokenUrl, profileOf, REPUTATION_REGISTRY } from '@shared/erc8004'
 import { addressUrl, blockUrl, formatTimestamp, formatUsdc, shortAddress, statusPill, txUrl, type PillSpec } from '@/lib/format'
 import { ScoreDial } from '@/components/ScoreDial'
 import { Card } from '@/components/ui/card'
@@ -75,6 +77,10 @@ export function AgentProfile() {
           ) : null}
         </div>
       </header>
+
+      {/* Identity is static + one registry read: shown even while (or if) the
+          reputation history is still being indexed. */}
+      {address ? <Erc8004Card address={address} /> : null}
 
       {isLoading ? (
         <ProfileSkeleton />
@@ -239,6 +245,50 @@ function ProfileBody({ data }: { data: AgentData }) {
         )}
       </section>
     </>
+  )
+}
+
+// The agent's identity in Arc's official ERC-8004 registries: its agent ID, the
+// card it registered (which points back here), and the verdict feedback the
+// arbiter has posted to the Reputation Registry, read live from chain.
+function Erc8004Card({ address }: { address: string }) {
+  const agentId = profileOf(address)?.erc8004Id
+  const { data: summary } = useReadContract({
+    address: REPUTATION_REGISTRY,
+    abi: reputationAbi,
+    functionName: 'getSummary',
+    args: [BigInt(agentId ?? 0), [ARBITER_ADDRESS], FEEDBACK_TAG, ''],
+    query: { enabled: agentId !== undefined },
+  })
+  if (agentId === undefined) return null
+  const [count, value, decimals] = summary ?? []
+  const average = count && value !== undefined ? Number(value) / 10 ** Number(decimals ?? 0) : undefined
+  return (
+    <Card className="flex flex-col gap-3 rounded-xl border-border bg-card p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-[16px] font-semibold text-foreground">ERC-8004 identity</h2>
+        <Badge variant="outline" className="tabular rounded-md border-neon/30 bg-neon/10 text-[11px] font-medium tracking-wide text-neon">
+          Agent #{agentId}
+        </Badge>
+      </div>
+      <p className="max-w-[75ch] text-[14px] leading-relaxed text-muted-foreground">
+        Registered in Arc's official ERC-8004 Identity Registry with an agent card that points back to this profile.
+        Every new verdict the AgentScore arbiter settles is also posted to the ERC-8004 Reputation Registry as feedback
+        linked to the job, so any ERC-8004 client can read this record.
+      </p>
+      <p className="tabular text-[13px] text-foreground">
+        {count === undefined
+          ? 'Reading verdict feedback…'
+          : count === 0n
+            ? 'No verdict feedback posted yet.'
+            : `${count} verdict${count === 1n ? '' : 's'} posted · average ${average}/100`}
+      </p>
+      <div className="flex flex-wrap gap-4 text-[13px]">
+        <ExplorerLink href={identityTokenUrl(agentId)}>Identity token</ExplorerLink>
+        <ExplorerLink href={cardUrl(address)}>Agent card</ExplorerLink>
+        <ExplorerLink href={addressUrl(REPUTATION_REGISTRY)}>Reputation Registry</ExplorerLink>
+      </div>
+    </Card>
   )
 }
 

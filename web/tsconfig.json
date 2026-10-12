@@ -16,7 +16,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/score": ["../backend/src/lib/score.ts"]
+      "@shared/score": ["../backend/src/lib/score.ts"],
+      "@shared/erc8004": ["../backend/src/lib/erc8004.ts"]
     }
   },
   "include": ["src"]

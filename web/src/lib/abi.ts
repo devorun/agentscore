@@ -57,3 +57,8 @@ export const appealsAbi = parseAbi([
   'function jobAppealed(uint256 jobId) view returns (bool)',
   'function isOverturned(uint256 jobId) view returns (bool)',
 ])
+
+// Official ERC-8004 Reputation Registry on Arc Testnet — read-only summary.
+export const reputationAbi = parseAbi([
+  'function getSummary(uint256 agentId, address[] clientAddresses, string tag1, string tag2) view returns (uint64 count, int128 summaryValue, uint8 summaryValueDecimals)',
+])
