@@ -25,6 +25,26 @@ export const registryAbi = parseAbi([
   'function getVerdicts(address agent) view returns ((uint256 jobId, bytes32 reasonHash, address arbiter, uint64 attestedAt, uint8 outcome)[])',
   'function verdictCount(address agent) view returns (uint256)',
   'function jobAttested(uint256 jobId) view returns (bool)',
+  'function registerAgent(string name, string[] skillTags, string metadataURI)',
+  'function isRegistered(address agent) view returns (bool)',
+  'function getAgent(address agent) view returns ((string name, string metadataURI, string[] skillTags, uint64 registeredAt, uint64 updatedAt))',
+  'function agentCount() view returns (uint256)',
+])
+
+// Official ERC-8004 registries on Arc Testnet (see lib/erc8004.ts).
+export const identityAbi = parseAbi([
+  'event Registered(uint256 indexed agentId, string agentURI, address indexed owner)',
+  'function register(string agentURI) returns (uint256 agentId)',
+  'function setAgentURI(uint256 agentId, string newURI)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function ownerOf(uint256 agentId) view returns (address)',
+  'function tokenURI(uint256 agentId) view returns (string)',
+])
+
+export const reputationAbi = parseAbi([
+  'event NewFeedback(uint256 indexed agentId, address indexed clientAddress, uint64 feedbackIndex, int128 value, uint8 valueDecimals, string indexed indexedTag1, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash)',
+  'function giveFeedback(uint256 agentId, int128 value, uint8 valueDecimals, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash)',
+  'function getSummary(uint256 agentId, address[] clientAddresses, string tag1, string tag2) view returns (uint64 count, int128 summaryValue, uint8 summaryValueDecimals)',
 ])
 
 // AgentScoreAppeals — second-arbiter appeal outcomes (Outcome enum: 0=Approved, 1=Rejected).

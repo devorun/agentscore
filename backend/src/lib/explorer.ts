@@ -74,10 +74,21 @@ interface RpcLog {
   logIndex: Hex
 }
 
-/** Logs in blocks (from, to], read from chain. `upTo` is the last block
- * actually covered: a page that still fails after retries stops the backfill
- * there, and callers never claim a block past it. */
-export async function fetchChainLogs(from: bigint, to: bigint): Promise<{ logs: ExplorerLog[]; upTo: bigint; error?: string }> {
+export interface LogFilter {
+  address: Address[]
+  topics: (Hex | Hex[] | null)[]
+}
+const BACKFILL_FILTER: LogFilter = { address: [ERC8183_ADDRESS, APPEALS_ADDRESS], topics: [BACKFILL_TOPICS] }
+
+/** Logs in blocks (from, to], read from chain — every event scoring reads, or
+ * the narrower `filter`. `upTo` is the last block actually covered: a page that
+ * still fails after retries stops the backfill there, and callers never claim
+ * a block past it. */
+export async function fetchChainLogs(
+  from: bigint,
+  to: bigint,
+  filter: LogFilter = BACKFILL_FILTER,
+): Promise<{ logs: ExplorerLog[]; upTo: bigint; error?: string }> {
   const logs: ExplorerLog[] = []
   let upTo = from
   for (let page = 0; page < BACKFILL_MAX_PAGES && upTo < to; page++) {
@@ -86,7 +97,7 @@ export async function fetchChainLogs(from: bigint, to: bigint): Promise<{ logs: 
     let found: RpcLog[]
     try {
       found = await rpc<RpcLog[]>([LOGS_RPC], 'eth_getLogs', [
-        { address: [ERC8183_ADDRESS, APPEALS_ADDRESS], topics: [BACKFILL_TOPICS], fromBlock: `0x${start.toString(16)}`, toBlock: `0x${end.toString(16)}` },
+        { address: filter.address, topics: filter.topics, fromBlock: `0x${start.toString(16)}`, toBlock: `0x${end.toString(16)}` },
       ])
     } catch (e) {
       return { logs, upTo, error: String((e as Error).message ?? e).slice(0, 160) }
