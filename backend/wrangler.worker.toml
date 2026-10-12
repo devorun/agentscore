@@ -23,6 +23,9 @@ AGENT_PRICE_USDC = "2"
 # Public addresses of the secret keys above — reads never touch key material.
 AGENT_ADDRESS = "0x939ABdD89fE9C5aAC54615f56c50901acf5E6918"
 ARBITER_ADDRESS = "0x5d474e5125D7ee1a63EE2f2444a88e2a518683E9"
+# ERC-8004: verdicts on jobs from this id on are posted to the official
+# Reputation Registry (earlier verdicts are not back-posted). Unset = off.
+FEEDBACK_FROM_JOB = "186901"
 
 [observability]
 enabled = true

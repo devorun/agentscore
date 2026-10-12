@@ -12,6 +12,9 @@
 //   - RECEIPT-FREE sends with local nonce increments — never polls receipts;
 //     the next tick observes the resulting state and retries idempotently
 //   - hard cap of MAX_SENDS (2) transactions per tick
+//   - every settled + attested verdict for an agent with an ERC-8004 identity
+//     is posted once to the official ERC-8004 Reputation Registry as feedback
+//     linked to the job (dedup: the job's endpoint in the arbiter's NewFeedback logs)
 //   - [JUDGED] jobs are skipped (they need the LLM + deliverable store — the
 //     local worker's feature); deterministic jobs settle fully autonomously
 //
@@ -21,9 +24,10 @@
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { createPublicClient, encodeFunctionData, getAddress, http, keccak256, toHex, type Address, type Hex } from 'viem'
 import { signTransaction } from 'viem/accounts'
-import { erc8183Abi, registryAbi } from './lib/abi.js'
+import { erc8183Abi, registryAbi, reputationAbi } from './lib/abi.js'
 import { ADVANCE_PCT, COLLATERAL_PCT, creditTermsEarned, isCollateralJob, parseTermsMarker, type TermsMarker } from './lib/credit.js'
 import { enrich, enrichTampered, hashOutput, verify, type WalletRow } from './lib/enrichment.js'
+import { feedbackArgs, feedbackEndpoint, jobUrl, profileOf, REPUTATION_REGISTRY } from './lib/erc8004.js'
 import { isJudgedJob } from './lib/judged.js'
 import { aggregate3, decodeJob, MULTICALL3, rpc, rpcOnce, selector, uint, word, type JobView } from './lib/lean.js'
 import { computeReputation } from './lib/reputation.js'
@@ -40,6 +44,9 @@ interface Env {
   AGENT_ADDRESS?: string
   ARBITER_ADDRESS?: string
   DISCOVERY_PAGES?: string
+  /** First job id whose verdict is posted to the ERC-8004 Reputation Registry
+   * (verdicts settled before the integration shipped are not back-posted). */
+  FEEDBACK_FROM_JOB?: string
 }
 
 const ERC8183 = '0x0747EEf0706327138c69792bF28Cd525089e4583' as const
@@ -64,6 +71,9 @@ const JOB_SUBMITTED_TOPIC = keccak256(toHex('JobSubmitted(uint256,address,bytes3
 const JOB_COMPLETED_TOPIC = keccak256(toHex('JobCompleted(uint256,address,bytes32)'))
 const JOB_REJECTED_TOPIC = keccak256(toHex('JobRejected(uint256,address,bytes32)'))
 const TRANSFER_TOPIC = keccak256(toHex('Transfer(address,address,uint256)'))
+const NEW_FEEDBACK_TOPIC = keccak256(
+  toHex('NewFeedback(uint256,address,uint64,int128,uint8,string,string,string,string,string,bytes32)'),
+)
 // Function selectors, computed once at startup (not per tick).
 const JOB_COUNTER_CALL = selector('jobCounter()')
 const GET_JOB_SELECTOR = selector('getJob(uint256)')
@@ -91,31 +101,44 @@ interface TickReport {
   skipped: string[]
 }
 
+interface RawLog {
+  topics: Hex[]
+  data: Hex
+  blockTimestamp?: Hex
+}
+
 // Reads go over the lean path (lib/lean.ts): plain fetch, hand-coded calldata
 // and results. Sends reuse it; viem only encodes calldata and signs.
 
 /** eth_getLogs over `pages` ranges of LOG_STEP blocks back from `blockHead`,
  * newest first, stopping early once `enough` is satisfied. Sequential, and a
  * failed page contributes nothing: no retry storm (each failed request used to
- * cost CPU building viem errors, times three retries). */
+ * cost CPU building viem errors, times three retries). `complete` is false when
+ * any page failed — callers that must not act on a partial view check it, and
+ * can ask for `retry` (backoff on the same endpoint; waiting costs no CPU). */
 async function logPages(
   url: string,
   blockHead: bigint,
   pages: number,
   topics: (Hex | Hex[] | null)[],
-  enough: (found: { topics: Hex[]; data: Hex }[]) => boolean = () => false,
-): Promise<{ topics: Hex[]; data: Hex }[]> {
-  const found: { topics: Hex[]; data: Hex }[] = []
+  enough: (found: RawLog[]) => boolean = () => false,
+  address: Address = ERC8183,
+  retry = false,
+): Promise<RawLog[] & { complete?: boolean; error?: string }> {
+  const found: RawLog[] & { complete?: boolean; error?: string } = []
+  found.complete = true
   for (let i = 0; i < pages; i++) {
     const to = blockHead - BigInt(i) * LOG_STEP
     if (to < 0n) break
     const from = to > LOG_STEP ? to - LOG_STEP + 1n : 0n
     try {
-      const params = [{ address: ERC8183, topics, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]
-      found.push(...(await rpcOnce<{ topics: Hex[]; data: Hex }[]>(url, 'eth_getLogs', params)))
+      const params = [{ address, topics, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }]
+      found.push(...(await (retry ? rpc<RawLog[]>([url], 'eth_getLogs', params) : rpcOnce<RawLog[]>(url, 'eth_getLogs', params))))
       if (enough(found)) break
-    } catch {
+    } catch (e) {
       /* page unavailable this tick — the counter tail still covers new jobs */
+      found.complete = false
+      found.error ??= String((e as Error).message ?? e).slice(0, 80)
     }
   }
   return found
@@ -288,7 +311,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
     from: Address,
     action: string,
     jobId: bigint,
-    params: { address: Address; abi: typeof erc8183Abi | typeof registryAbi; functionName: string; args: readonly unknown[] },
+    params: { address: Address; abi: typeof erc8183Abi | typeof registryAbi | typeof reputationAbi; functionName: string; args: readonly unknown[] },
   ) {
     if (dryRun) {
       report.sends.push({ action: `DRY:${action}`, jobId: jobId.toString(), tx: '' })
@@ -309,13 +332,32 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   }
 
   /** The reason a settlement committed on chain (JobCompleted / JobRejected
-   * data), searched back a few pages. */
-  async function settlementReason(jobId: bigint): Promise<Hex | undefined> {
+   * data) and its block time, searched back a few pages. */
+  async function settlement(jobId: bigint): Promise<{ reason: Hex; settledAt: number } | undefined> {
     const topics: (Hex | Hex[])[] = [[JOB_COMPLETED_TOPIC, JOB_REJECTED_TOPIC], `0x${jobId.toString(16).padStart(64, '0')}`]
     const found = await logPages(logsRpc, blockHead, SUBMITTED_LOOKBACK_PAGES, topics, (f) => f.length > 0)
-    const data = found[0]?.data
-    return data && data.length >= 66 ? (data.slice(0, 66) as Hex) : undefined
+    const log = found[0]
+    if (!log || log.data.length < 66) return undefined
+    return { reason: log.data.slice(0, 66) as Hex, settledAt: log.blockTimestamp ? Number(BigInt(log.blockTimestamp)) : 0 }
   }
+
+  /** Job endpoints the arbiter already posted feedback for, for an ERC-8004
+   * agent: its NewFeedback logs over the discovery window, topic-filtered by
+   * agentId and the arbiter. Any failed page → undefined: never post on a
+   * partial view, which could double-post. The window always covers a
+   * discovered job's feedback: it is emitted after the job was created. */
+  const postedCache = new Map<number, { posted?: Set<string>; error?: string }>()
+  async function postedFeedback(agentId: number): Promise<{ posted?: Set<string>; error?: string }> {
+    const cached = postedCache.get(agentId)
+    if (cached) return cached
+    const topics = [NEW_FEEDBACK_TOPIC, `0x${agentId.toString(16).padStart(64, '0')}` as Hex, topicAddress(ARBITER) as Hex]
+    const found = await logPages(logsRpc, blockHead, pages, topics, undefined, REPUTATION_REGISTRY, true)
+    const result = found.complete ? { posted: new Set(found.map((l) => feedbackEndpoint(l.data))) } : { error: found.error }
+    postedCache.set(agentId, result)
+    return result
+  }
+  // Unset: ERC-8004 feedback is off.
+  const feedbackFrom = env.FEEDBACK_FROM_JOB ? BigInt(env.FEEDBACK_FROM_JOB) : undefined
 
   /** Deliverable hash the provider actually submitted (topic-filtered, tiny),
    * searched back a few pages. Not found → the job is skipped this tick, never
@@ -383,6 +425,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
   }
 
   const nowSec = Math.floor(Date.now() / 1000)
+  const feedbackQueue: { jobId: bigint; agentId: number; completed: boolean }[] = []
 
   for (let i = 0; i < ids.length && report.sends.length < MAX_SENDS; i++) {
     const job = states[i]
@@ -451,7 +494,7 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
         // the reason the settlement actually committed on chain (a late reject
         // and a bad-work reject differ), never a re-derived guess.
         const good = job.status === JobStatus.Completed
-        const reason = await settlementReason(jobId)
+        const reason = (await settlement(jobId))?.reason
         if (!reason) {
           report.skipped.push(`#${jobId} settlement reason not found yet`)
           continue
@@ -477,10 +520,39 @@ export async function tick(env: Env, dryRun: boolean): Promise<TickReport> {
           })
         }
       }
+      // ERC-8004 feedback for this attested verdict: queued for the pass
+      // below, which only spends what settlement left of the send budget.
+      const agentId = profileOf(job.provider)?.erc8004Id
+      if (agentId !== undefined && feedbackFrom !== undefined && jobId >= feedbackFrom) {
+        feedbackQueue.push({ jobId, agentId, completed: job.status === JobStatus.Completed })
+      }
     }
     } catch (e) {
       // One job's failure never aborts the tick — skip it, retry next minute.
       report.skipped.push(`#${jobId} error: ${String((e as Error).message ?? e).slice(0, 90)}`)
+    }
+  }
+
+  // ERC-8004: post each attested verdict to the official Reputation Registry,
+  // once, as feedback linked to the job. Settlement always goes first.
+  for (const { jobId, agentId, completed } of feedbackQueue) {
+    if (report.sends.length >= MAX_SENDS) break
+    try {
+      const { posted, error } = await postedFeedback(agentId)
+      if (!posted) {
+        report.skipped.push(`#${jobId} ERC-8004 feedback log read incomplete (${error}), retry next tick`)
+        continue
+      }
+      if (posted.has(jobUrl(jobId))) continue
+      const settled = await settlement(jobId)
+      if (!settled || !settled.settledAt) {
+        report.skipped.push(`#${jobId} settlement log not found yet`)
+        continue
+      }
+      const args = feedbackArgs({ agentId, jobId, completed, reason: settled.reason, arbiter: ARBITER, settledAt: settled.settledAt })
+      await send(ARBITER, 'arbiter ERC-8004 feedback', jobId, { address: REPUTATION_REGISTRY, abi: reputationAbi, functionName: 'giveFeedback', args })
+    } catch (e) {
+      report.skipped.push(`#${jobId} ERC-8004 feedback error: ${String((e as Error).message ?? e).slice(0, 90)}`)
     }
   }
   return report
